@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="OmniChain Wallet — multi-chain portfolio for Ethereum, BNB, Polygon, Arbitrum, Optimism, Base, Avalanche, Solana and Tron.">
+    <title>OmniChain Wallet — Multi-Chain Portfolio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Design system -->
+    <link rel="stylesheet" href="styles.css">
+
+    <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.0/dist/ethers.umd.min.js"></script>
+    <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.min.js"></script>
+    <script>window.solana = { web3: window.solanaWeb3 };</script>
+    <script src="https://cdn.jsdelivr.net/npm/tronweb@5.3.0/dist/TronWeb.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/buffer@6.0.3/index.min.js"></script>
+</head>
+<body>
+
+    <!-- Startup error banner (shown only if a required library fails to load) -->
+    <div id="init-error" class="init-error hidden" role="alert">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+        <span id="init-error-text"></span>
+    </div>
+
+    <!-- Toast notifications (managed by ui.js) -->
+    <div id="toast-stack" class="toast-stack" aria-live="polite" aria-atomic="false"></div>
+
+    <!-- ============================================================
+         APP SHELL
+         ============================================================ -->
+    <div class="app-shell">
+
+        <!-- ================= HEADER ================= -->
+        <header class="app-header">
+            <div class="header-row">
+                <div class="brand">
+                    <div class="logo-mark" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 2l8 3.5v5.5c0 4.5-3.2 8.2-8 10.5-4.8-2.3-8-6-8-10.5V5.5L12 2z"/>
+                            <path d="M12 8v4"/>
+                            <circle cx="12" cy="15" r="0.6" fill="currentColor"/>
+                        </svg>
+                    </div>
+                    <div class="brand-text">
+                        <span class="brand-name">OmniChain</span>
+                        <span class="brand-sub">Multi-Chain Wallet</span>
+                    </div>
+                </div>
+
+                <div class="header-actions">
+                    <div class="status-pill" id="net-pill" title="All chains are mainnet">
+                        <span class="pulse-dot"></span>
+                        <span>Mainnet</span>
+                    </div>
+                    <div class="status-pill status-pill--muted" id="vault-pill" title="Vault state">
+                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                        <span id="vault-pill-text">No Vault</span>
+                    </div>
+                    <button id="theme-toggle" class="icon-btn" type="button" title="Toggle light/dark theme" aria-label="Toggle light/dark theme"></button>
+                </div>
+            </div>
+
+            <nav class="tabs" role="tablist" aria-label="Main navigation">
+                <button class="tab-btn active" data-tab="dashboard" type="button" role="tab" aria-selected="true">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+                    Dashboard
+                </button>
+                <button class="tab-btn" data-tab="send" type="button" role="tab" aria-selected="false">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+                    Send & Sign
+                </button>
+                <button class="tab-btn" data-tab="settings" type="button" role="tab" aria-selected="false">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    Settings
+                </button>
+            </nav>
+        </header>
+
+        <!-- ================= MAIN ================= -->
+        <main class="app-main">
+
+            <!-- ================= DASHBOARD ================= -->
+            <div id="tab-dashboard" class="tab-content fade-in" role="tabpanel">
+
+                <!-- Portfolio hero -->
+                <section class="section-card highlight-card hero-card">
+                    <div class="hero-orb hero-orb--a" aria-hidden="true"></div>
+                    <div class="hero-orb hero-orb--b" aria-hidden="true"></div>
+                    <div class="hero-grid" aria-hidden="true"></div>
+
+                    <div class="portfolio-head">
+                        <div class="hero-copy">
+                            <span class="eyebrow">Portfolio Overview</span>
+                            <h3>Multi-Chain Portfolio</h3>
+                            <p class="hint-text">Live balances across 9 mainnet chains — native coins + USDC, USDT, WETH</p>
+                        </div>
+                        <div class="stat-row">
+                            <div class="stat-badge">
+                                <span class="stat-num" id="total-assets-count">0</span>
+                                <span class="stat-label">Assets</span>
+                            </div>
+                            <div class="stat-badge">
+                                <span class="stat-num" id="total-active-chains">0</span>
+                                <span class="stat-label">Active Chains</span>
+                            </div>
+                            <div class="stat-badge">
+                                <span class="stat-num" id="total-usd-value">$0</span>
+                                <span class="stat-label">Total Value</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Asset Allocation Chart -->
+                <section class="section-card">
+                    <div class="card-head">
+                        <div class="card-title">
+                            <h3>Asset Allocation</h3>
+                        </div>
+                        <div class="btn-group" style="margin-top:0">
+                            <button id="refresh-prices-btn" class="btn-secondary" type="button">
+                                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                                Refresh Prices
+                            </button>
+                            <div class="select-wrap" style="min-width:140px">
+                                <select id="currency-selector">
+                                    <option value="usd">USD</option>
+                                    <option value="eur">EUR</option>
+                                    <option value="gbp">GBP</option>
+                                    <option value="jpy">JPY</option>
+                                    <option value="btc">BTC</option>
+                                    <option value="eth">ETH</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="allocation-chart" id="allocation-chart" role="img" aria-label="Asset allocation pie chart"></div>
+                </section>
+
+                <!-- Accounts / Live Balances -->
+                <section class="section-card">
+                    <div class="card-head">
+                        <div class="card-title">
+                            <h3>Live Multichain Balances</h3>
+                            <span class="count-badge" id="all-balance-accounts-count">0</span>
+                        </div>
+                        <div class="btn-group" style="margin-top:0; gap:8px">
+                            <span class="status-pill status-pill--muted" id="all-balance-status" title="Balance scanner status">
+                                <span class="pulse-dot"></span>
+                                <span>--</span>
+                            </span>
+                            <label class="switch switch--row" for="all-balance-hide-zero" style="margin:0">
+                                <span class="switch-label-text" style="display:none">Hide zero</span>
+                                <input type="checkbox" id="all-balance-hide-zero" class="switch-input">
+                                <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+                            </label>
+                            <button id="refresh-all-balance-btn" class="btn-secondary" type="button" style="padding:8px 14px; font-size:0.78rem">
+                                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                                Refresh
+                            </button>
+                        </div>
+                    </div>
+                    <div class="hint-text">Real-time balance monitoring across all chains. Auto-refreshes every 60s. Balances update live.</div>
+                    <div id="all-balance-grid" class="balance-grid"></div>
+                </section>
+
+                <!-- Recent Activity -->
+                <section class="section-card">
+                    <div class="card-head">
+                        <div class="card-title">
+                            <h3>Recent Activity</h3>
+                            <span class="count-badge count-badge--ghost" id="log-count">0</span>
+                        </div>
+                    </div>
+                    <div id="log-container" class="log-console"></div>
+                </section>
+
+                <!-- Asset Holdings Table -->
+                <section class="section-card">
+                     <div class="card-head">
+                         <div class="card-title">
+                             <h3>Asset Holdings</h3>
+                         </div>
+                         <div class="btn-group" style="margin-top:0">
+                             <button id="refresh-assets-btn" class="btn-secondary" type="button">
+                                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                                 Refresh
+                             </button>
+                             <div class="select-wrap" style="min-width:140px">
+                                 <select id="asset-currency-selector">
+                                     <option value="usd">USD</option>
+                                     <option value="eur">EUR</option>
+                                     <option value="gbp">GBP</option>
+                                     <option value="jpy">JPY</option>
+                                     <option value="btc">BTC</option>
+                                     <option value="eth">ETH</option>
+                                 </select>
+                             </div>
+                         </div>
+                     </div>
+                     <div id="assets-scan-warning" class="status-msg error hidden" style="margin-bottom:12px"></div>
+                     <div id="assets-table-container">
+                         <table class="assets-table" id="assets-table">
+                             <thead>
+                                 <tr>
+                                     <th>Asset</th>
+                                     <th>Chain</th>
+                                     <th>Balance</th>
+                                      <th id="assets-price-header">Price</th>
+                                      <th id="assets-value-header">Value</th>
+                                     <th>%</th>
+                                     <th></th>
+                                 </tr>
+                             </thead>
+                             <tbody id="assets-tbody"></tbody>
+                         </table>
+                     </div>
+                     <div id="assets-empty" class="empty-state hidden">
+                         <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                         <span id="assets-empty-text">No assets found. Import accounts to see holdings.</span>
+                     </div>
+                 </section>
+
+                <!-- Custom Tokens -->
+                 <section class="section-card">
+                     <div class="card-head">
+                         <div class="card-title">
+                             <h3>Custom Tokens</h3>
+                         </div>
+                         <button id="add-custom-token-btn" class="btn-secondary" type="button" style="flex:0 0 auto">
+                             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                             Add Token
+                         </button>
+                     </div>
+                     <p class="hint-text">Manually add tokens not auto-detected. Contract addresses are saved to your vault.</p>
+                     <div id="custom-tokens-list" class="custom-tokens-list"></div>
+                     <div id="custom-token-empty" class="empty-state">
+                         <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"  stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                         <span>No custom tokens added.</span>
+                     </div>
+                 </section>
+             </div>
+
+            <!-- ================= SEND & SIGN ================= -->
+            <div id="tab-send" class="tab-content hidden fade-in" role="tabpanel">
+
+                <!-- Wallet Permissions -->
+                <section class="section-card">
+                    <div class="card-head">
+                        <div class="card-title">
+                            <h3>Wallet Permissions</h3>
+                            <span class="count-badge count-badge--ghost" id="permission-count">0</span>
+                        </div>
+                        <button id="revoke-all-permissions-btn" class="btn-secondary" type="button" style="flex:0 0 auto">
+                            Revoke All
+                        </button>
+                    </div>
+                    <p class="hint-text">These dApps have permission to request signatures and transactions from your wallet.</p>
+                    <div id="permissions-list" class="permission-list">
+                        <div id="permissions-empty" class="empty-state">
+                            <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12h6M9 16h6M10 6h4a2 2 0 0 1 2 2v2H8V8a2 2 0 0 1 2-2z"/><path d="M4 22V8a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v14"/></svg>
+                            <span>No permissions granted yet.</span>
+                        </div>
+                        <div id="permissions-table-container"></div>
+                    </div>
+                </section>
+
+                <!-- Send Funds -->
+                <section class="section-card" id="send-funds-section">
+                    <div class="card-head">
+                        <div class="card-title">
+                            <h3>Send Funds</h3>
+                            <span class="send-balance" id="selected-balance"></span>
+                        </div>
+                        <span class="account-label mono" id="selected-account-label" style="display:block; margin-top:4px"></span>
+                    </div>
+
+                    <div class="send-form">
+                        <div class="field">
+                            <label for="send-asset-type">Asset Type</label>
+                            <div class="select-wrap">
+                                <select id="send-asset-type">
+                                    <option value="native">Native Coin (ETH, BNB, SOL, TRX)</option>
+                                    <option value="usdc">USDC</option>
+                                    <option value="usdt">USDT</option>
+                                    <option value="weth">WETH</option>
+                                    <option value="custom">Custom Token</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div id="custom-token-input" class="hidden">
+                            <div class="field">
+                                <label for="custom-contract">Token Contract Address</label>
+                                <input type="text" id="custom-contract" placeholder="0x... or TR7..." spellcheck="false" autocomplete="off">
+                            </div>
+                        </div>
+
+                        <div class="grid-2">
+                            <div class="field">
+                                <label for="send-to">Recipient Address</label>
+                                <div class="input-with-bookmark">
+                                    <input type="text" id="send-to" placeholder="0x... / base58..." spellcheck="false" autocomplete="off">
+                                    <button id="address-book-btn" class="icon-btn" type="button" title="Address Book" aria-label="Address Book">
+                                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="field">
+                                <label for="send-amount">Amount</label>
+                                <div class="input-affix">
+                                    <input type="number" id="send-amount" placeholder="0.00" step="0.000001" min="0" inputmode="decimal">
+                                    <button id="max-btn" class="affix-btn" type="button" title="Use full balance">MAX</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="fee-row">
+                            <span class="fee-label">
+                                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                                Network fee
+                            </span>
+                            <span class="fee-value mono" id="send-fee-value">Estimated at confirmation</span>
+                        </div>
+
+                        <button id="send-btn" class="btn-primary btn-send" type="button">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+                            <span>Send Funds</span>
+                        </button>
+                        <div id="send-status" class="status-msg" role="status"></div>
+                    </div>
+                </section>
+
+                <!-- Sign Message -->
+                <section class="section-card">
+                    <div class="card-head">
+                        <div class="card-title">
+                            <h3>Sign Message</h3>
+                        </div>
+                    </div>
+                    <p class="hint-text">Sign arbitrary messages with your keys. Supports EVM (EIP-191), Solana, and Tron.</p>
+                    <div class="field">
+                        <label for="sign-message-input">Message to Sign</label>
+                        <textarea id="sign-message-input" rows="3" placeholder="Enter message to sign..." spellcheck="false"></textarea>
+                    </div>
+                    <div class="grid-2">
+                        <div class="field">
+                            <label for="sign-account-select">Account</label>
+                            <div class="select-wrap">
+                                <select id="sign-account-select">
+                                    <option value="">Select account...</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label for="sign-type-select">Signature Type</label>
+                            <div class="select-wrap">
+                                <select id="sign-type-select">
+                                    <option value="evm-personal">EVM Personal Sign (EIP-191)</option>
+                                    <option value="evm-typed">EVM Typed Data (EIP-712)</option>
+                                    <option value="solana">Solana Sign</option>
+                                    <option value="tron">Tron Sign</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="btn-group">
+                        <button id="sign-message-btn" class="btn-primary" type="button">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-3.5 8-10V5l-8-3-8 3v7c0 6.5 8 10 8 10z"/></svg>
+                            Sign Message
+                        </button>
+                        <button id="verify-signature-btn" class="btn-secondary" type="button" style="flex:0 0 auto">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/></svg>
+                            Verify
+                        </button>
+                    </div>
+                    <div class="field">
+                        <label for="signature-output">Signature</label>
+                        <textarea id="signature-output" rows="3" readonly placeholder="Signature will appear here..." spellcheck="false"></textarea>
+                    </div>
+                    <div id="verify-result" class="status-msg" role="status"></div>
+                </section>
+
+                <!-- Verify Signature Modal -->
+                <div id="verify-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="verify-modal-title">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h3 id="verify-modal-title">Verify Signature</h3>
+                            <button id="verify-modal-close" class="modal-close" type="button" aria-label="Close">
+                                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                            </button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="field">
+                                <label for="verify-address-input">Address</label>
+                                <input type="text" id="verify-address-input" placeholder="0x... / base58..." spellcheck="false" autocomplete="off">
+                            </div>
+                            <div class="field">
+                                <label for="verify-message-input">Original Message</label>
+                                <textarea id="verify-message-input" rows="3" placeholder="Enter original message..." spellcheck="false"></textarea>
+                            </div>
+                            <div class="field">
+                                <label for="verify-signature-input">Signature (hex)</label>
+                                <textarea id="verify-signature-input" rows="2" placeholder="0x..." spellcheck="false"></textarea>
+                            </div>
+                            <div class="field">
+                                <label for="verify-type-select">Signature Type</label>
+                                <div class="select-wrap">
+                                    <select id="verify-type-select">
+                                        <option value="evm">EVM Personal Sign (EIP-191)</option>
+                                        <option value="solana">Solana</option>
+                                        <option value="tron">Tron</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div id="verify-modal-result" class="status-msg" role="status"></div>
+                        </div>
+                        <div class="modal-footer">
+                            <button id="verify-modal-cancel-btn" class="btn-secondary" type="button">Close</button>
+                            <button id="verify-modal-btn" class="btn-primary" type="button">Verify Signature</button>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- ================= SETTINGS ================= -->
+            <div id="tab-settings" class="tab-content hidden fade-in" role="tabpanel">
+                <section class="section-card">
+                    <div class="card-head">
+                        <div class="card-title">
+                            <h3>Import Accounts</h3>
+                        </div>
+                    </div>
+                    <p class="hint-text">Paste multiple seeds or keys. <strong>One per line.</strong> Your keys are stored locally in your browser's local storage.</p>
+
+                    <div class="field">
+                        <label for="mnemonic-input">Mnemonic Phrases (12–24 words)</label>
+                        <textarea id="mnemonic-input" rows="3" placeholder="word1 word2 word3 ...&#10;word1 word2 word3 ..." spellcheck="false"></textarea>
+                    </div>
+
+                    <div class="field">
+                        <label for="pk-input">Private Keys (Hex or Base58)</label>
+                        <textarea id="pk-input" rows="3" placeholder="0x...&#10;base58..." spellcheck="false"></textarea>
+                    </div>
+
+                    <div class="btn-group">
+                        <button id="import-btn" class="btn-primary" type="button">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+                            Import &amp; Scan
+                        </button>
+                    </div>
+                    <div id="setup-msg" class="status-msg" role="status"></div>
+
+                    <div class="security-note">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                        <span>Keys are stored locally in your browser's local storage in plain text. No encryption or passwords.</span>
+                    </div>
+                </section>
+
+                <!-- Vault Backup -->
+                <section class="section-card">
+                    <div class="card-head">
+                        <div class="card-title">
+                            <h3>Vault Backup</h3>
+                        </div>
+                    </div>
+                    <p class="hint-text">Export or import your vault backup file (.json).</p>
+                    <div class="btn-group">
+                        <button id="export-vault-btn" class="btn-secondary" type="button" style="flex:0 0 auto">
+                            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+                            Export Vault
+                        </button>
+                        <button id="import-vault-btn" class="btn-secondary" type="button" style="flex:0 0 auto">
+                            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+                            Import Vault
+                        </button>
+                    </div>
+                </section>
+
+                <!-- Network Configuration -->
+                <section class="section-card">
+                    <div class="card-head">
+                        <div class="card-title">
+                            <h3>Network Configuration</h3>
+                        </div>
+                        <button id="save-network-btn" class="btn-secondary" type="button" style="flex:0 0 auto">
+                            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4l2 2h6l2-2h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2z"/></svg>
+                            Save Changes
+                        </button>
+                    </div>
+                    <p class="hint-text">Manage RPC endpoints for each chain. Failed endpoints are automatically skipped. Drag to reorder priority.</p>
+                    <div id="network-config-list" class="network-config-list"></div>
+                </section>
+
+                <!-- Advanced Settings -->
+                <section class="section-card">
+                    <div class="card-head">
+                        <div class="card-title">
+                            <h3>Advanced</h3>
+                        </div>
+                        <button id="save-advanced-btn" class="btn-secondary" type="button" style="flex:0 0 auto">
+                            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4l2 2h6l2-2h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2z"/></svg>
+                            Save
+                        </button>
+                    </div>
+                    <p class="hint-text">Configure advanced settings for the wallet.</p>
+                    <div class="field">
+                        <label for="api-key-input">Explorer API Key</label>
+                        <input type="text" id="api-key-input" placeholder="Etherscan / TronGrid API key (optional)" spellcheck="false">
+                    </div>
+                    <div class="field">
+                        <label for="proxy-url-input">CORS Proxy URL</label>
+                        <input type="url" id="proxy-url-input" placeholder="https://corsproplease.com/proxy?url=" spellcheck="false">
+                        <p class="hint-text" style="margin-top:4px">Optional proxy for bypassing CORS restrictions. Leave empty to disable.</p>
+                    </div>
+                    <div class="grid-2">
+                        <div class="field">
+                            <label for="rpc-timeout-input">RPC Timeout (ms)</label>
+                            <input type="number" id="rpc-timeout-input" min="1000" max="60000" step="1000" value="10000">
+                        </div>
+                        <div class="field">
+                            <label for="scan-concurrency-input">Scan Concurrency</label>
+                            <input type="number" id="scan-concurrency-input" min="1" max="20" value="5">
+                        </div>
+                    </div>
+                    <label class="switch" for="use-proxy-toggle">
+                        <span class="switch-label-text">Use CORS proxy</span>
+                        <input type="checkbox" id="use-proxy-toggle" class="switch-input">
+                        <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+                    </label>
+                </section>
+
+                <!-- Address Book -->
+                <section class="section-card">
+                    <div class="card-head">
+                        <div class="card-title">
+                            <h3>Address Book</h3>
+                        </div>
+                        <button id="add-contact-btn" class="btn-secondary" type="button" style="flex:0 0 auto">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                            Add Contact
+                        </button>
+                    </div>
+                    <p class="hint-text">Saved contacts. Available for autocomplete when sending.</p>
+                    <div id="address-book-list" class="address-book-list"></div>
+                    <div id="address-book-empty" class="empty-state">
+                        <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                        <span>No contacts saved.</span>
+                    </div>
+                </section>
+
+                <!-- Danger Zone -->
+                <section class="section-card">
+                    <div class="card-head">
+                        <div class="card-title">
+                            <h3>Danger Zone</h3>
+                        </div>
+                    </div>
+                    <p class="hint-text" style="color: var(--error);">These actions are irreversible. Proceed with caution.</p>
+                    <div class="btn-group">
+                        <button id="clear-vault-btn" class="btn-secondary btn-danger" type="button" style="flex:1">
+                            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                            Clear Vault
+                        </button>
+                        <button id="reset-app-btn" class="btn-secondary btn-danger" type="button" style="flex:1">
+                            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 1 2.72 6.72L3 21l2.72-1.62A9 9 0 0 0 12 21a9 9 0 1 0-9-9z"/></svg>
+                            Reset App
+                        </button>
+                    </div>
+                </section>
+            </div>
+        </main>
+
+        <!-- ================= FOOTER ================= -->
+        <footer class="app-footer">
+            <span class="footer-dot" aria-hidden="true"></span>
+            <span>OmniChain Wallet</span>
+        </footer>
+    </div>
+
+    <!-- ================= ADDRESS BOOK MODAL ================= -->
+    <div id="address-book-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="ab-modal-title">
+        <div class="modal-content">
+            <div class="modal-icon modal-icon--violet" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            </div>
+            <h3 id="ab-modal-title">Add Contact</h3>
+            <div class="field">
+                <label for="ab-name-input">Name</label>
+                <input type="text" id="ab-name-input" placeholder="e.g. Alice" autocomplete="off">
+            </div>
+            <div class="field">
+                <label for="ab-address-input">Address</label>
+                <input type="text" id="ab-address-input" placeholder="0x... / base58..." spellcheck="false" autocomplete="off">
+            </div>
+            <div id="ab-error" class="status-msg error"></div>
+            <div class="btn-group">
+                <button id="ab-save-btn" class="btn-primary" type="button">Save Contact</button>
+                <button id="ab-cancel-btn" class="btn-secondary" type="button">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= CUSTOM TOKEN MODAL ================= -->
+    <div id="custom-token-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="ct-modal-title">
+        <div class="modal-content">
+            <div class="modal-icon modal-icon--violet" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </div>
+            <h3 id="ct-modal-title">Add Custom Token</h3>
+            <div class="field">
+                <label for="ct-symbol-input">Token Symbol</label>
+                <input type="text" id="ct-symbol-input" placeholder="e.g. ABC" autocomplete="off">
+            </div>
+            <div class="field">
+                <label for="ct-chain-select">Chain</label>
+                <div class="select-wrap">
+                    <select id="ct-chain-select"></select>
+                </div>
+            </div>
+            <div class="field">
+                <label for="ct-contract-input">Contract Address</label>
+                <input type="text" id="ct-contract-input" placeholder="0x..." spellcheck="false" autocomplete="off">
+            </div>
+            <div class="field">
+                <label for="ct-decimals-input">Decimals</label>
+                <input type="number" id="ct-decimals-input" placeholder="18" min="0" max="18" value="18">
+            </div>
+            <div id="ct-error" class="status-msg error"></div>
+            <div class="btn-group">
+                <button id="ct-save-btn" class="btn-primary" type="button">Save Token</button>
+                <button id="ct-cancel-btn" class="btn-secondary" type="button">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= SEND CONFIRMATION MODAL ================= -->
+    <div id="send-confirm-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="sc-modal-title">
+        <div class="modal-content modal-content--large">
+            <div class="modal-icon modal-icon--gradient" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+            </div>
+            <h3 id="sc-modal-title">Confirm Transaction</h3>
+            <div class="send-confirm-grid">
+                <div class="confirm-row">
+                    <span class="confirm-label">From</span>
+                    <span class="confirm-value mono" id="sc-from-address">--</span>
+                </div>
+                <div class="confirm-row">
+                    <span class="confirm-label">To</span>
+                    <span class="confirm-value mono" id="sc-to-address">--</span>
+                </div>
+                <div class="confirm-row">
+                    <span class="confirm-label">Amount</span>
+                    <span class="confirm-value" id="sc-amount">--</span>
+                </div>
+                <div class="confirm-row">
+                    <span class="confirm-label">Asset</span>
+                    <span class="confirm-value" id="sc-asset">--</span>
+                </div>
+                <div class="confirm-row">
+                    <span class="confirm-label">Network Fee</span>
+                    <span class="confirm-value" id="sc-fee">--</span>
+                </div>
+                <div class="confirm-row">
+                    <span class="confirm-label">Total</span>
+                    <span class="confirm-value" id="sc-total">--</span>
+                </div>
+                <div class="confirm-row">
+                    <span class="confirm-label">Account Balance</span>
+                    <span class="confirm-value" id="sc-balance">--</span>
+                </div>
+                <div class="confirm-row" style="margin-top: 8px;">
+                    <span class="confirm-label">Type address to confirm</span>
+                    <input type="text" id="sc-verify-input" placeholder="Paste recipient address" style="width:100%; padding:6px 8px; font-size:0.8rem; font-family:monospace; background:var(--surface-2); border:1px solid var(--border); border-radius:4px; color:var(--text)">
+                    <div style="font-size:0.7rem; color:var(--muted); margin-top:4px">Type the recipient address exactly to enable sending</div>
+                </div>
+            </div>
+            <div id="sc-error" class="status-msg error"></div>
+            <div class="btn-group">
+                <button id="sc-confirm-btn" class="btn-primary" type="button" disabled>Confirm & Send</button>
+                <button id="sc-cancel-btn" class="btn-secondary" type="button">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= IMPORT VAULT FILE MODAL ================= -->
+    <div id="import-file-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="if-modal-title">
+        <div class="modal-content">
+            <div class="modal-icon modal-icon--violet" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/></svg>
+            </div>
+            <h3 id="if-modal-title">Import Vault Backup</h3>
+            <p class="modal-text">Select a vault backup file (.json) to restore your accounts.</p>
+            <div class="field">
+                <label for="vault-file-input">Backup File</label>
+             <input type="file" id="vault-file-input" accept=".json,.enc" />
+             </div>
+             <div id="if-error" class="status-msg error"></div>
+            <div class="btn-group">
+                <button id="if-import-btn" class="btn-primary" type="button">Import Vault</button>
+                <button id="if-cancel-btn" class="btn-secondary" type="button">Cancel</button>
+            </div>
+        </div>
+     </div>
+
+    <!-- App logic (load order matters) -->
+    <script src="js/config.js"></script>
+    <script src="js/vault.js"></script>
+    <script src="js/chains.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/pricing.js"></script>
+    <script src="js/network.js"></script>
+    <script src="js/signing.js"></script>
+    <script src="js/transactions.js"></script>
+    <script src="js/allbalance.js"></script>
+    <script src="js/script.js"></script>
+</body>
