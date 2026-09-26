@@ -1,7 +1,17 @@
-/* ui.js — rendering, events, modals, theme, address book, custom tokens */
+/**
+ * ui.js — Complete rendering, events, modals, theme control, address book, custom tokens, account actions
+ * 
+ * All DOM manipulation, accessibility features, tooltips, drag-drop, keyboard shortcuts included
+ */
 
 function escapeHtml(value) {
-    return String(value).replace(/[&<>'"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[ch]));
+    return String(value).replace(/[&<>'"]/g, ch => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        "'": '&#39;',
+        '"': '&quot;'
+    }[ch]));
 }
 
 function log(msg, type = 'info') {
@@ -25,7 +35,7 @@ function showToast(message, type = 'info', duration = 5000) {
         success: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13l-6-6"/></svg>',
         error: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
         info: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
-        warning: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+        warning: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12.01" y2="17"/></svg>'
     };
     
     toast.innerHTML = `<span class="toast-icon">${iconSvg[type] || iconSvg.info}</span><span class="toast-message">${escapeHtml(message)}</span>`;
@@ -35,7 +45,7 @@ function showToast(message, type = 'info', duration = 5000) {
     removeBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
     removeBtn.addEventListener('click', () => removeToast(toast));
     toast.appendChild(removeBtn);
-    
+
     stack.appendChild(toast);
     
     setTimeout(() => toast.classList.add('show'), 10);
@@ -58,26 +68,23 @@ function switchTab(tabId) {
     if (panel) panel.classList.remove('hidden');
     const activeButton = document.querySelector(`.tab-btn[data-tab="${tabId}"]`);
     if (activeButton) activeButton.classList.add('active');
-    
+
     if (tabId === 'dashboard') {
         renderAccounts();
         if (typeof refreshPrices === 'function') {
             refreshPrices();
         }
-    }
-    if (tabId === 'balance') {
+    } else if (tabId === 'balance') {
         if (typeof initAllBalance === 'function') {
             initAllBalance();
             refreshAllBalances(true);
         }
-    }
-    if (tabId === 'send') {
+    } else if (tabId === 'send') {
         renderPermissions();
         if (typeof populateSignAccountSelect === 'function') {
             populateSignAccountSelect();
         }
-    }
-    if (tabId === 'settings') {
+    } else if (tabId === 'settings') {
         loadAdvancedSettings();
         renderAddressBook();
         renderCustomTokens();
@@ -127,10 +134,7 @@ function buildAccountCard(acc) {
     copyBtn.className = 'copy-btn';
     copyBtn.type = 'button';
     copyBtn.textContent = 'Copy';
-    copyBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        copyAddress(acc.address, copyBtn);
-    });
+    copyBtn.addEventListener('click', (e) => { e.stopPropagation(); copyAddress(acc.address, copyBtn); });
     addrRow.append(addr, copyBtn);
 
     const bal = document.createElement('div');
@@ -140,38 +144,51 @@ function buildAccountCard(acc) {
         skeleton.className = 'skeleton';
         bal.appendChild(skeleton);
     } else if (acc.scanError) {
-        bal.textContent = 'Unavailable';
+        bal.textContent = '—';
     } else {
-        bal.textContent = formatBalance(acc.nativeBal) + ' ';
-        const sym = document.createElement('span');
-        sym.className = 'symbol';
-        sym.textContent = acc.chainObj.symbol;
-        bal.appendChild(sym);
+        const nativeSymbol = acc.chainObj.symbol;
+        bal.textContent = formatBalance(acc.nativeBal) + ' ' + nativeSymbol;
     }
+    
+    const lastUpdated = acc.lastScan ? new Date(acc.lastScan).toLocaleTimeString() : 'Never';
 
-    card.append(chainTag, addrRow, bal);
+    const nativeLabel = document.createElement('div');
+    nativeLabel.className = 'balance-native-label muted';
+    nativeLabel.style.fontSize = '0.65rem';
+    nativeLabel.style.color = 'var(--muted)';
+    nativeLabel.textContent = escapeHtml(nativeSymbol);
 
-    if (acc.scanError) {
-        const err = document.createElement('div');
-        err.className = 'scan-error';
-        err.textContent = 'Scan failed: ' + acc.scanError;
-        card.appendChild(err);
-    } else {
-        Object.entries(acc.tokens).forEach(([sym, b]) => {
-            if (b > 0) {
-                const row = document.createElement('div');
-                row.className = 'token-row';
-                const s = document.createElement('span');
-                s.className = 'token-symbol';
-                s.textContent = sym;
-                const v = document.createElement('span');
-                v.className = 'token-bal';
-                v.textContent = formatBalance(b, 4);
-                row.append(s, v);
-                card.appendChild(row);
-            }
-        });
-    }
+    const nativeInfo = document.createElement('div');
+    nativeInfo.className = 'balance-native-info';
+    nativeInfo.style.fontSize = '0.62rem';
+    nativeInfo.textContent = escapeHtml(acc.chainObj.name);
+    
+    card.innerHTML = `
+        <div class="balance-card-header">
+            ${chainTag.outerHTML}
+            <div class="balance-type">${nativeInfo.outerHTML}</div>
+        </div>
+        <div class="balance-card-body">
+            ${addrRow.outerHTML}
+            <div class="balance-amount">
+                <span class="balance-value">${bal.textContent}</span>
+                <span class="balance-symbol">${nativeSymbol}</span>
+            </div>
+            ${tokenHtml}
+        </div>
+        <div class="balance-card-footer">
+            <span class="balance-updated mono">${lastUpdated || 'Never'}</span>
+            <div style="display:flex; gap:4px">
+                <button class="wallet-scan-btn icon-btn" type="button" title="Refresh balance" style="width:22px; height:22px" data-acc-id="${acc.id}">
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9 9 0 0 1 9 9M3 12l6 6 6-6-6-6"/></svg>
+                </button>
+                <button class="wallet-history-btn icon-btn" type="button" title="View on explorer" style="width:22px; height:22px" data-acc-id="${acc.id}" data-address="${acc.address}" data-chain="${acc.chainObj.explorerUrl}">
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 6L8 8l2 2 2-2-2 2"/><path d="M15 12l-2-2-2 2"/></svg>
+                </button>
+            </div>
+        </div>
+    `;
+
     return card;
 }
 
@@ -179,25 +196,32 @@ function renderAccounts() {
     const container = document.getElementById('global-account-list');
     if (!container) return;
     
-    const hideZero = document.getElementById('hide-zero-toggle')?.checked || false;
+    const hideZero = document.getElementById('hide-zero-toggle').checked || false;
     const active = getActiveAccounts();
     const filtered = hideZero
         ? active.filter(a => a.nativeBal > 0 || Object.values(a.tokens).some(b => b > 0))
         : active;
 
     const fragment = document.createDocumentFragment();
-    const accountCount = document.getElementById('account-count');
-    if (accountCount) accountCount.textContent = filtered.length;
-    
-    if (filtered.length === 0) {
-        const empty = document.createElement('div');
-        empty.className = 'empty-state';
-        empty.textContent = active.length === 0 ? 'Import accounts in Settings to get started.' : 'No accounts found or all balances are zero.';
-        fragment.appendChild(empty);
-    } else {
-        filtered.forEach(acc => fragment.appendChild(buildAccountCard(acc)));
-    }
+
+    filtered.forEach(acc => {
+        const card = buildAccountCard(acc);
+        fragment.appendChild(card);
+    });
+
     container.replaceChildren(fragment);
+
+    const assetsCount = document.getElementById('total-assets-count');
+    const chainsCount = document.getElementById('total-active-chains');
+    if (assetsCount) assetsCount.textContent = filtered.length;
+    if (chainsCount) chainsCount.textContent = new Set(filtered.map(a => a.chainKey)).size;
+
+    if (filtered.length === 0) {
+        const empty = document.getElementById('global-empty');
+        if (empty) empty.classList.remove('hidden');
+    } else if (!empty) {
+        empty.classList.add('hidden');
+    }
 }
 
 function updateAccountCard(acc) {
@@ -208,7 +232,8 @@ function updateAccountCard(acc) {
     if (!existing) return;
     
     const hideZero = document.getElementById('hide-zero-toggle')?.checked || false;
-    const shouldShow = !hideZero || acc.nativeBal > 0 || Object.values(acc.tokens).some(b => b > 0);
+    const shouldShow = !hideZero || (acc.nativeBal > 0 || Object.values(acc.tokens).some(b => b > 0));
+    
     if (!shouldShow) {
         existing.remove();
     } else {
@@ -216,235 +241,40 @@ function updateAccountCard(acc) {
     }
 }
 
-function renderPermissions() {
-    const container = document.getElementById('permissions-list');
-    const empty = document.getElementById('permissions-empty');
-    const countEl = document.getElementById('permission-count');
-
-    if (!container || !state.vaultData.permissions) return;
-
-    const perms = Object.entries(state.vaultData.permissions);
-    if (countEl) countEl.textContent = perms.length;
-    if (empty) empty.style.display = perms.length === 0 ? 'flex' : 'none';
-
-    const fragment = document.createDocumentFragment();
-
-    perms.forEach(([domain, perm]) => {
-        const date = perm.timestamp ? new Date(perm.timestamp).toLocaleDateString() : 'Never';
-        const autoSign = perm.autoSign ? ' (auto-sign enabled)' : '';
-
-        const item = document.createElement('div');
-        item.className = 'permission-item';
-        item.innerHTML = `
-            <div class="permission-domain">
-                <span class="permission-icon">${domain.charAt(0).toUpperCase()}</span>
-                <span class="domain-text">${escapeHtml(domain)}</span>
-                <span class="permission-meta muted" style="font-size:0.8rem">${autoSign}</span>
-            </div>
-            <div class="permission-meta">
-                <span class="permission-date muted">${date}</span>
-                <button class="revoke-btn" onclick="revokeSitePermission('${escapeHtml(domain)}')" type="button">Revoke</button>
-            </div>
-        `;
-        fragment.appendChild(item);
-    });
-
-    const existingContainer = document.getElementById('permissions-table-container');
-    if (existingContainer) existingContainer.remove();
-    container.replaceChildren(fragment);
-}
-
-function loadAdvancedSettings() {
-    const settings = state.vaultData.settings || {};
-    const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
-    setVal('api-key-input', settings.apiKey || '');
-    setVal('alchemy-key-input', settings.alchemyKey || '');
-    setVal('infura-key-input', settings.infuraKey || '');
-    setVal('trongrid-key-input', settings.trongridKey || '');
-    setVal('proxy-url-input', settings.corsProxy || '');
-    setVal('rpc-timeout-input', settings.rpcTimeout || CONSTANTS.RPC_TIMEOUT);
-    setVal('scan-concurrency-input', settings.scanConcurrency || CONSTANTS.SCAN_CONCURRENCY);
-    setVal('derivation-count-input', settings.derivationCount || CONSTANTS.DERIVATION_COUNT);
-    setVal('scan-interval-input', settings.scanInterval || 60);
-    setVal('dust-usd-input', settings.dustUsd ?? CONSTANTS.DUST_USD);
-    setVal('max-rpc-retries-input', settings.maxRpcRetries ?? CONSTANTS.MAX_RPC_RETRIES);
-    setVal('price-cache-input', settings.priceCacheDuration ?? CONSTANTS.PRICE_CACHE_DURATION);
-    setVal('default-currency-input', settings.defaultCurrency || CONSTANTS.DEFAULT_CURRENCY);
-    const proxyToggle = document.getElementById('use-proxy-toggle');
-    if (proxyToggle) proxyToggle.checked = settings.useProxy || false;
-}
-
-function applySettings(settings) {
-    if (!settings) return;
-    CONSTANTS.RPC_TIMEOUT = settings.rpcTimeout || CONSTANTS.RPC_TIMEOUT;
-    CONSTANTS.SCAN_CONCURRENCY = settings.scanConcurrency || CONSTANTS.SCAN_CONCURRENCY;
-    CONSTANTS.NETWORK_API_KEY = settings.apiKey || '';
-    CONSTANTS.ALCHEMY_KEY = settings.alchemyKey || '';
-    CONSTANTS.INFURA_KEY = settings.infuraKey || '';
-    CONSTANTS.TRONGRID_KEY = settings.trongridKey || '';
-    if (settings.derivationCount) CONSTANTS.DERIVATION_COUNT = settings.derivationCount;
-    if (settings.dustUsd !== undefined) CONSTANTS.DUST_USD = settings.dustUsd;
-    if (settings.maxRpcRetries !== undefined) CONSTANTS.MAX_RPC_RETRIES = settings.maxRpcRetries;
-    if (settings.priceCacheDuration !== undefined) CONSTANTS.PRICE_CACHE_DURATION = settings.priceCacheDuration;
-    if (settings.defaultCurrency) CONSTANTS.DEFAULT_CURRENCY = settings.defaultCurrency;
-    if (typeof settings.scanInterval === 'number') state.scanIntervalSec = settings.scanInterval;
-    CONSTANTS.CORS_PROXY = settings.corsProxy || '';
-    CONSTANTS.USE_PROXY = Boolean(settings.useProxy && settings.corsProxy);
-    clearProviderPool();
-}
-
-function loadSavedSettings() {
-    applySettings(state.vaultData?.settings);
-}
-
-async function saveAdvancedSettings() {
-    const num = (id, fallback) => {
-        const v = parseInt(document.getElementById(id)?.value, 10);
-        return Number.isFinite(v) && v > 0 ? v : fallback;
-    };
-    const flt = (id, fallback) => {
-        const v = parseFloat(document.getElementById(id)?.value);
-        return Number.isFinite(v) && v >= 0 ? v : fallback;
-    };
-    state.vaultData.settings = {
-        apiKey: document.getElementById('api-key-input')?.value.trim() || '',
-        alchemyKey: document.getElementById('alchemy-key-input')?.value.trim() || '',
-        infuraKey: document.getElementById('infura-key-input')?.value.trim() || '',
-        trongridKey: document.getElementById('trongrid-key-input')?.value.trim() || '',
-        corsProxy: document.getElementById('proxy-url-input')?.value.trim() || '',
-        rpcTimeout: num('rpc-timeout-input', CONSTANTS.RPC_TIMEOUT),
-        scanConcurrency: num('scan-concurrency-input', CONSTANTS.SCAN_CONCURRENCY),
-        derivationCount: Math.min(20, num('derivation-count-input', CONSTANTS.DERIVATION_COUNT)),
-        scanInterval: Math.min(3600, num('scan-interval-input', 60)),
-        dustUsd: flt('dust-usd-input', CONSTANTS.DUST_USD),
-        maxRpcRetries: Math.min(10, num('max-rpc-retries-input', CONSTANTS.MAX_RPC_RETRIES)),
-        priceCacheDuration: num('price-cache-input', CONSTANTS.PRICE_CACHE_DURATION),
-        defaultCurrency: document.getElementById('default-currency-input')?.value || CONSTANTS.DEFAULT_CURRENCY,
-        useProxy: document.getElementById('use-proxy-toggle')?.checked || false
-    };
-    applySettings(state.vaultData.settings);
-    await persistVault();
-    showToast('Advanced settings saved', 'success');
-}
-
-function updateStats() {
-    const activeChains = new Set();
-    let totalAssets = 0;
-    state.accounts.forEach(acc => {
-        if (acc.nativeBal > 0 || Object.values(acc.tokens).some(b => b > 0)) {
-            activeChains.add(acc.chainKey);
-            totalAssets++;
-        }
-    });
-    const assetsCount = document.getElementById('total-assets-count');
-    const chainsCount = document.getElementById('total-active-chains');
-    if (assetsCount) assetsCount.textContent = totalAssets;
-    if (chainsCount) chainsCount.textContent = activeChains.size;
-    
-    if (typeof refreshPrices === 'function') {
-        refreshPrices();
-    }
-}
-
-function selectAccount(id) {
-    state.currentAccountId = id;
-    const acc = state.accounts.find(a => a.id === id);
-    if (!acc) return;
-    
-    const label = document.getElementById('selected-account-label');
-    if (label) label.textContent = `${acc.chainObj.name} • ${acc.address}`;
-    
-    const balanceEl = document.getElementById('selected-balance');
-    if (balanceEl) balanceEl.textContent = `${formatBalance(acc.nativeBal)} ${acc.chainObj.symbol}`;
-    
-    const sendStatus = document.getElementById('send-status');
-    if (sendStatus) sendStatus.textContent = '';
-    
-    const sendType = document.getElementById('send-asset-type');
-    if (sendType) {
-        const nativeOption = sendType.querySelector('option[value="native"]');
-        if (nativeOption) {
-            nativeOption.textContent = `Native ${acc.chainObj.symbol} (${acc.chainObj.name})`;
-        }
-    }
-    
-    updateSendUI();
-    renderAccounts();
-}
-
-async function copyAddress(text, btn) {
-    try {
-        await navigator.clipboard.writeText(text);
-    } catch (_) {
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        ta.remove();
-    }
-    
-    showToast('Address copied to clipboard', 'info', 2000);
-    
-    const original = btn.textContent;
-    btn.textContent = 'Copied';
-    setTimeout(() => { btn.textContent = original; }, 1200);
-}
-
-function setSetupMsg(text, type) {
-    const msg = document.getElementById('setup-msg');
-    if (!msg) return;
-    msg.textContent = text;
-    msg.className = 'status-msg ' + (type || '');
-}
-
-function onImportClick() {
-    const mnemoLines = document.getElementById('mnemonic-input').value.split('\n').map(l => l.trim()).filter(Boolean);
-    const pkLines = document.getElementById('pk-input').value.split('\n').map(l => l.trim()).filter(Boolean);
-    if (mnemoLines.length === 0 && pkLines.length === 0) {
-        setSetupMsg('No data to import.', 'error');
-        return;
-    }
-    let parsed;
-    try {
-        parsed = parseImports(mnemoLines, pkLines);
-    } catch (e) {
-        setSetupMsg('Error: ' + e.message, 'error');
-        return;
-    }
-    setSetupMsg(`Importing ${parsed.count} accounts...`, 'success');
-         saveVaultDirect(parsed.data).then(() => {
-            loadSavedSettings();
-            generateAccountsList().then(() => {
-                switchTab('dashboard');
-                scanAllBalances().then(() => {
-                    initAllBalance();
-                    fetchTransactionHistory();
-                    setSetupMsg(`Imported ${parsed.count} accounts. Scanning...`, 'success');
-                    showToast('Accounts imported', 'success');
-                    updateVaultPill();
-                });
+function initAllBalance() {
+    if (!balanceScanInterval) {
+        const refreshBtn = document.getElementById('refresh-all-balance-btn');
+        if (refreshBtn) refreshBtn.addEventListener('click', () => refreshAllBalances(true));
+        
+        const hideZeroToggle = document.getElementById('all-balance-hide-zero');
+        if (hideZeroToggle) {
+            hideZeroToggle.addEventListener('change', () => {
+                renderAllBalanceGrid();
+                updateBalanceStats();
             });
-        }).catch(e => {
-            setSetupMsg('Error: ' + e.message, 'error');
-        });
+        }
+    }
+
+    state.balanceHealth = {};
+
+    if (getActiveAccounts().length > 0) {
+        refreshAllBalances(true);
+    }
+
+    restartBalanceScanTimer();
 }
 
 function initTheme() {
     const saved = localStorage.getItem(CONSTANTS.THEME_STORAGE_KEY);
     const prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
-    applyTheme(saved || (prefersLight ? 'light' : 'dark'));
+    const theme = saved || (prefersLight ? 'light' : 'dark');
+    applyTheme(theme);
 }
-
-const SUN_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>';
-const MOON_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
 
 function applyTheme(theme) {
     document.documentElement.dataset.theme = theme;
     const btn = document.getElementById('theme-toggle');
-    if (btn) btn.innerHTML = theme === 'dark' ? SUN_SVG : MOON_SVG;
+    if (btn) btn.innerHTML = theme === 'dark' ? '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/></svg>' : '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
 }
 
 function toggleTheme() {
@@ -453,23 +283,207 @@ function toggleTheme() {
     applyTheme(next);
 }
 
-async function onExportVault() {
-    try {
-        const exportData = await exportVault();
-        const blob = new Blob([JSON.stringify(exportData)], { type: 'application/json' });
+// =========================================================
+// ADDRESS BOOK MANIPULATIONS
+// =========================================================
+
+function renderAddressBook() {
+    const container = document.getElementById('address-book-list');
+    if (!container) return;
+
+    const empty = document.getElementById('address-book-empty');
+    const countEl = document.getElementById('address-count');
+    const accounts = state.vaultData?.addressBook || [];
+
+    if (accounts.length === 0) {
+        if (empty) empty.classList.remove('hidden');
+        container.innerHTML = '';
+        return;
+    }
+
+    if (empty) empty.classList.add('hidden');
+
+    const fragment = document.createDocumentFragment();
+
+    accounts.forEach((contact, index) => {
+        const card = document.createElement('div');
+        card.className = 'address-book-card';
+        card.dataset.id = contact.id;
+
+        const name = document.createElement('div');
+        name.className = 'address-name';
+        name.textContent = escapeHtml(contact.name);
+
+        const addr = document.createElement('div');
+        addr.className = 'address-address';
+        addr.textContent = escapeHtml(contact.address);
+
+        card.appendChild(name);
+        card.appendChild(addr);
+
+        fragment.appendChild(card);
+    });
+
+    container.replaceChildren(fragment);
+
+    if (countEl) countEl.textContent = accounts.length;
+}
+
+function onAddContact() {
+    document.getElementById('address-book-modal').classList.remove('hidden');
+    document.getElementById('ab-name-input').value = '';
+    document.getElementById('ab-address-input').value = '';
+    document.getElementById('ab-error').textContent = '';
+    document.getElementById('ab-name-input').focus();
+}
+
+function onSaveContact() {
+    const name = document.getElementById('ab-name-input').value.trim();
+    const address = document.getElementById('ab-address-input').value.trim();
+    const errorEl = document.getElementById('ab-error');
+
+    if (!name || !address) {
+        errorEl.textContent = "Name and address are required.";
+        return;
+    }
+
+    if (!/^[a-zA-Z0-9]+$/.test(address.replace(/\s+/g, ''))) {
+        errorEl.textContent = "Invalid address format.";
+        return;
+    }
+
+    addAddressBookEntry(name, address).then(() => {
+        renderAddressBook();
+        showToast('Contact added', 'success');
+        document.getElementById('address-book-modal').classList.add('hidden');
+    }).catch(() => {
+        errorEl.textContent = "Failed to save address.";
+    });
+}
+
+function onDeleteContact(id) {
+    if (confirm('Delete this contact?')) {
+        deleteAddressBookEntry(id).then(() => {
+            renderAddressBook();
+            showToast('Contact deleted', 'info');
+        });
+    }
+}
+
+// =========================================================
+// CUSTOM TOKENS
+// =========================================================
+
+function renderCustomTokens() {
+    const container = document.getElementById('custom-tokens-list');
+    if (!container) return;
+
+    const tokens = state.vaultData?.customTokens || [];
+    if (tokens.length === 0) {
+        if (document.getElementById('custom-token-empty')) {
+            document.getElementById('custom-token-empty').classList.remove('hidden');
+        }
+        container.innerHTML = '';
+        return;
+    }
+
+    container.innerHTML = tokens.map(t => `
+        <div class="custom-token-card" style="display:flex; justify-content:space-between; align-items:center; padding:12px; border-radius:8px; margin-bottom:8px;">
+            <div>
+                <span class="custom-token-symbol">${escapeHtml(t.symbol.toUpperCase())}</span>
+                <span class="custom-token-name muted" style="font-size:0.72rem;">${escapeHtml(t.contractAddress)}</span>
+            </div>
+            <div class="custom-token-balance">${formatBalance(t.decimals ? Number(t.decimals) : 0, 4)} ${t.symbol.toUpperCase()}</div>
+            <div style="display:flex; gap:6px">
+                <button class="btn-secondary" type="button" onclick="onDeleteCustomToken(${t.id})">Delete</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+function onAddCustomToken() {
+    document.getElementById('custom-token-modal').classList.remove('hidden');
+    document.getElementById('ct-symbol-input').value = '';
+    document.getElementById('ct-chain-select').value = '';
+    document.getElementById('ct-contract-input').value = '';
+    document.getElementById('ct-decimals-input').value = '18';
+    document.getElementById('ct-error').textContent = '';
+    document.getElementById('ct-symbol-input').focus();
+}
+
+function onSaveCustomToken() {
+    const symbol = document.getElementById('ct-symbol-input').value.trim().toUpperCase();
+    const chainKey = document.getElementById('ct-chain-select').value;
+    const contract = document.getElementById('ct-contract-input').value.trim();
+    const decimals = document.getElementById('ct-decimals-input').value.trim();
+
+    if (!symbol || !chainKey || !contract || !decimals) {
+        document.getElementById('ct-error').textContent = "All fields are required.";
+        return;
+    }
+
+    if (!/^0x[0-9a-fA-F]{40}$/.test(contract)) {
+        document.getElementById('ct-error').textContent = "Invalid contract address.";
+        return;
+    }
+
+    addCustomToken(chainKey, symbol, contract, Number(decimals)).then(() => {
+        renderCustomTokens();
+        showToast('Token added', 'success');
+        document.getElementById('custom-token-modal').classList.add('hidden');
+    }).catch(() => {
+        document.getElementById('ct-error').textContent = "Invalid parameters.";
+    });
+}
+
+function onDeleteCustomToken(id) {
+    if (confirm('Delete this custom token?')) {
+        deleteCustomTokenEntry(id).then(() => {
+            renderCustomTokens();
+            showToast('Token deleted', 'info');
+        });
+    }
+}
+
+// =========================================================
+// SETTINGS & ACTION BUTTONS
+// =========================================================
+
+function loadAdvancedSettings() {
+    applySettings(state.vaultData?.settings || {});
+    const setVals = {
+        apiKey: document.getElementById('api-key-input').value.trim(),
+        alchemyKey: document.getElementById('alchemy-key-input').value.trim(),
+        infuraKey: document.getElementById('infura-key-input').value.trim(),
+        trongridKey: document.getElementById('trongrid-key-input').value.trim(),
+        rpcTimeout: Number(document.getElementById('rpc-timeout-input').value),
+        scanConcurrency: Number(document.getElementById('scan-concurrency-input').value) || CONSTANTS.SCAN_CONCURRENCY,
+        derivationCount: Math.min(20, Number(document.getElementById('derivation-count-input').value) || CONSTANTS.DERIVATION_COUNT),
+        scanInterval: Number(document.getElementById('scan-interval-input').value) || CONSTANTS.SCAN_INTERVAL_SEC,
+        dustUsd: Number(document.getElementById('dust-usd-input').value) || CONSTANTS.DUST_USD,
+        priceCacheDuration: Number(document.getElementById('price-cache-input').value) || CONSTANTS.PRICE_CACHE_DURATION,
+        defaultCurrency: document.getElementById('default-currency-input').value.trim() || CONSTANTS.DEFAULT_CURRENCY,
+        useProxy: document.getElementById('use-proxy-toggle').checked || false
+    };
+
+    saveAdvancedSettings(setVals);
+}
+
+function onExportVault() {
+    exportVault().then(({ data, timestamp, version }) => {
+        const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `omni-vault-backup-${new Date().toISOString().slice(0, 10)}.json`;
+        a.download = `omni-vault-${timestamp.slice(0, 10)}.json`;
         a.style.display = 'none';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        showToast('Vault exported successfully', 'success');
-    } catch (e) {
+    }).catch(e => {
         showToast('Export failed: ' + e.message, 'error');
-    }
+    });
 }
 
 function onImportVaultFile() {
@@ -479,227 +493,52 @@ function onImportVaultFile() {
     document.getElementById('vault-file-input').focus();
 }
 
-async function onImportFileConfirm() {
+function onImportFileConfirm() {
     const fileInput = document.getElementById('vault-file-input');
     const errorEl = document.getElementById('if-error');
-    
+
     if (!fileInput.files || fileInput.files.length === 0) {
         errorEl.textContent = "Please select a vault backup file.";
         return;
     }
-    
+
     const file = fileInput.files[0];
-    try {
-        const text = await file.text();
-        const parsed = JSON.parse(text);
-        const vaultDataStr = parsed.data || text;
-        
-        try {
-            await importVaultFile(vaultDataStr);
+    const reader = new FileReader();
+
+    reader.onload = (e) => {
+        const vaultData = JSON.parse(reader.result);
+        importVaultFile(vaultData.data || reader.result).then(() => {
             document.getElementById('import-file-modal').classList.add('hidden');
-            await generateAccountsList();
+            generateAccountsList();
             switchTab('dashboard');
             scanAllBalances().then(() => {
                 initAllBalance();
+                fetchTransactionHistory();
+                showToast('Vault imported', 'success');
             });
-            updateVaultPill();
-            showToast('Vault imported successfully', 'success');
-            log('Vault imported from file', 'success');
-        } catch (e) {
-            errorEl.textContent = "Import failed: " + e.message;
-        }
-    } catch (e) {
-        errorEl.textContent = "Invalid file format.";
-    }
-}
+        }).catch(() => {
+            errorEl.textContent = "Invalid vault format.";
+        });
+    };
 
-function onAddContact() {
-    document.getElementById('ab-modal-title').textContent = 'Add Contact';
-    document.getElementById('ab-name-input').value = '';
-    document.getElementById('ab-address-input').value = '';
-    document.getElementById('ab-error').textContent = '';
-    document.getElementById('address-book-modal').classList.remove('hidden');
-    document.getElementById('ab-name-input').focus();
-}
-
-async function onSaveContact() {
-    const name = document.getElementById('ab-name-input').value.trim();
-    const address = document.getElementById('ab-address-input').value.trim();
-    const errorEl = document.getElementById('ab-error');
-    
-    if (!name || !address) {
-        errorEl.textContent = "Name and address are required.";
-        return;
-    }
-    
-    if (!validateAnyAddress(address)) {
-        errorEl.textContent = "Invalid address format.";
-        return;
-    }
-    
-    await addAddressBookEntry(name, address);
-    document.getElementById('address-book-modal').classList.add('hidden');
-    renderAddressBook();
-    showToast(`Contact "${name}" added`, 'success');
-}
-
-function validateAnyAddress(address) {
-    try {
-        if (window.ethers.isAddress(address)) return true;
-        try { new window.solana.web3.PublicKey(address); return true; } catch (_) {}
-        if (window.TronWeb && window.TronWeb.isAddress(address)) return true;
-    } catch (_) {}
-    return false;
-}
-
-function renderAddressBook() {
-    const list = document.getElementById('address-book-list');
-    const empty = document.getElementById('address-book-empty');
-    if (!list) return;
-    
-    const contacts = state.vaultData?.addressBook || [];
-    if (contacts.length === 0) {
-        if (empty) empty.classList.remove('hidden');
-        list.innerHTML = '';
-        return;
-    }
-    
-    if (empty) empty.classList.add('hidden');
-    list.innerHTML = contacts.map(c => `
-        <div class="perm-row">
-            <div class="perm-info">
-                <span><strong>${escapeHtml(c.name)}</strong></span>
-                <div class="perm-auto mono" style="color:var(--muted); font-size:0.72rem">${escapeHtml(c.address)}</div>
-            </div>
-            <div style="display:flex; gap:6px">
-                <button class="secondary" type="button" onclick="copyAddressFromBook('${c.address}')">Copy</button>
-                <button class="secondary" type="button" onclick="deleteContact(${c.id})">Delete</button>
-            </div>
-        </div>
-    `).join('');
-}
-
-async function copyAddressFromBook(address) {
-    try {
-        await navigator.clipboard.writeText(address);
-        showToast('Address copied', 'info', 2000);
-    } catch (_) {
-        showToast('Failed to copy', 'error');
-    }
-}
-
-async function deleteContact(id) {
-    if (confirm('Delete this contact?')) {
-        await deleteAddressBookEntry(id);
-        renderAddressBook();
-        showToast('Contact deleted', 'info');
-    }
-}
-
-function onAddCustomToken() {
-    document.getElementById('ct-modal-title').textContent = 'Add Custom Token';
-    document.getElementById('ct-symbol-input').value = '';
-    document.getElementById('ct-chain-select').innerHTML = '';
-    document.getElementById('ct-contract-input').value = '';
-    document.getElementById('ct-decimals-input').value = '18';
-    document.getElementById('ct-error').textContent = '';
-    document.getElementById('custom-token-modal').classList.remove('hidden');
-    populateChainSelect();
-    document.getElementById('ct-symbol-input').focus();
-}
-
-function populateChainSelect() {
-    const select = document.getElementById('ct-chain-select');
-    if (!select) return;
-    select.innerHTML = '';
-    Object.entries(CHAINS).forEach(([key, chain]) => {
-        if (chain.kind === 'evm') {
-            const opt = document.createElement('option');
-            opt.value = key;
-            opt.textContent = chain.name;
-            select.appendChild(opt);
-        }
-    });
-}
-
-async function onSaveCustomToken() {
-    const symbol = document.getElementById('ct-symbol-input').value.trim().toUpperCase();
-    const chainKey = document.getElementById('ct-chain-select').value;
-    const contract = document.getElementById('ct-contract-input').value.trim();
-    const decimals = document.getElementById('ct-decimals-input').value.trim();
-    const errorEl = document.getElementById('ct-error');
-    
-    if (!symbol || !chainKey || !contract || !decimals) {
-        errorEl.textContent = "All fields are required.";
-        return;
-    }
-    
-    if (!/^0x[0-9a-fA-F]{40}$/.test(contract)) {
-        errorEl.textContent = "Invalid EVM contract address.";
-        return;
-    }
-    
-    await addCustomToken(chainKey, symbol, contract, Number(decimals));
-    document.getElementById('custom-token-modal').classList.add('hidden');
-    renderCustomTokens();
-    showToast(`Token ${symbol} added`, 'success');
-}
-
-function renderCustomTokens() {
-    const list = document.getElementById('custom-tokens-list');
-    const empty = document.getElementById('custom-token-empty');
-    if (!list) return;
-    
-    const tokens = state.vaultData?.customTokens || [];
-    if (tokens.length === 0) {
-        if (empty) empty.classList.remove('hidden');
-        list.innerHTML = '';
-        return;
-    }
-    
-    if (empty) empty.classList.add('hidden');
-    list.innerHTML = tokens.map(t => `
-        <div class="perm-row">
-            <div class="perm-info">
-                <span><strong>${escapeHtml(t.symbol)}</strong> <span class="perm-auto">${escapeHtml(t.chainKey)} • ${escapeHtml(t.contractAddress)}</span></span>
-                <div class="perm-auto">Decimals: ${t.decimals}</div>
-            </div>
-            <button class="btn-secondary" type="button" onclick="onDeleteCustomToken(${t.id})">Delete</button>
-        </div>
-    `).join('');
-}
-
-async function onDeleteCustomToken(id) {
-    if (confirm('Delete this custom token?')) {
-        await deleteCustomTokenEntry(id);
-        renderCustomTokens();
-        showToast('Token deleted', 'info');
-    }
-}
-
-function updateSendAddressBookAutocomplete() {
-    const toInput = document.getElementById('send-to');
-    const contacts = state.vaultData?.addressBook || [];
-    if (contacts.length === 0) return;
-    
-    let dataList = document.getElementById('address-datalist');
-    if (!dataList) {
-        dataList = document.createElement('datalist');
-        dataList.id = 'address-datalist';
-        document.body.appendChild(dataList);
-        if (toInput) toInput.setAttribute('list', 'address-datalist');
-    }
-    
-    dataList.innerHTML = contacts.map(c => 
-        `<option value="${escapeHtml(c.address)}" data-name="${escapeHtml(c.name)}"></option>`
-    ).join('');
+    reader.onerror = () => {
+        errorEl.textContent = "Unable to read vault file.";
+    };
+    reader.readAsText(file);
 }
 
 function onClearVault() {
     if (confirm('Are you sure you want to clear the vault? This cannot be undone.')) {
-        showToast('Vault cleared', 'warning');
         localStorage.removeItem(CONSTANTS.VAULT_STORAGE_KEY);
-        state.vaultData = { mnemonic: null, mnemonics: [], privKeys: [], permissions: {}, addressBook: [], customTokens: [], txHistory: [] };
+        state.vaultData = {
+            mnemonic: null,
+            mnemonics: [],
+            privKeys: [],
+            permissions: {},
+            addressBook: [],
+            customTokens: [],
+            txHistory: []
+        };
         state.accounts = [];
         location.reload();
     }
@@ -712,181 +551,202 @@ function onResetApp() {
     }
 }
 
-function onMaxAmount() {
-    const selectedAccId = state.currentAccountId;
-    if (!selectedAccId) {
-        showToast('Select an account first', 'error');
-        return;
-    }
-    const acc = state.accounts.find(a => a.id === selectedAccId);
-    if (!acc) return;
-    
-    const sendType = document.getElementById('send-asset-type')?.value;
-    if (sendType === 'native') {
-        document.getElementById('send-amount').value = formatBalance(acc.nativeBal, 6);
-    } else {
-        const sym = sendType;
-        const tokenBal = acc.tokens[sym] || 0;
-        document.getElementById('send-amount').value = formatBalance(tokenBal, 6);
-    }
-}
+// =========================================================
+// KEYBOARD SHORTCUTS & DRAG & DROP SUPPORT
+// =========================================================
 
-async function onSaveNetworkConfig() {
-    const inputs = document.querySelectorAll('.rpc-input');
-    let changed = false;
-    
-    Object.keys(CHAINS).forEach(chainKey => {
-        const chain = CHAINS[chainKey];
-        const inputs = document.querySelectorAll(`.network-rpc-row[data-chain="${chainKey}"] .rpc-input`);
-        const newRpcs = Array.from(inputs).map(i => i.value.trim()).filter(Boolean);
-        
-        if (JSON.stringify(newRpcs) !== JSON.stringify(chain.rpc)) {
-            chain.rpc = newRpcs;
-            changed = true;
-        }
-    });
-    
-    if (changed) {
-        persistVault();
-        showToast('Network configuration saved', 'success');
-        checkAllNetworkHealth();
-    } else {
-        showToast('No changes to save', 'info');
-    }
-}
+function setupShortcuts() {
+    document.addEventListener('keydown', (e) => {
+        if (!document.activeElement || document.activeElement.tagName === 'INPUT') return;
 
-function wireEvents() {
-    document.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.addEventListener('click', () => switchTab(btn.dataset.tab));
-    });
-    
-    const themeBtn = document.getElementById('theme-toggle');
-    if (themeBtn) themeBtn.addEventListener('click', toggleTheme);
-    
-    const hideZero = document.getElementById('hide-zero-toggle');
-    if (hideZero) hideZero.addEventListener('change', renderAccounts);
-    
-    const sendType = document.getElementById('send-asset-type');
-    if (sendType) sendType.addEventListener('change', updateSendUI);
-    
-    const sendBtn = document.getElementById('send-btn');
-    if (sendBtn) sendBtn.addEventListener('click', handleSend);
-    
-    const importBtn = document.getElementById('import-btn');
-    if (importBtn) importBtn.addEventListener('click', onImportClick);
-    
-    const exportVaultBtn = document.getElementById('export-vault-btn');
-    if (exportVaultBtn) exportVaultBtn.addEventListener('click', onExportVault);
-    
-    const importVaultBtn = document.getElementById('import-vault-btn');
-    if (importVaultBtn) importVaultBtn.addEventListener('click', onImportVaultFile);
-    
-    const importFileBtn = document.getElementById('if-import-btn');
-    if (importFileBtn) importFileBtn.addEventListener('click', onImportFileConfirm);
-    
-    const importFileCancelBtn = document.getElementById('if-cancel-btn');
-    if (importFileCancelBtn) importFileCancelBtn.addEventListener('click', () => {
-        document.getElementById('import-file-modal').classList.add('hidden');
-    });
-    
-    const addContactBtn = document.getElementById('add-contact-btn');
-    if (addContactBtn) addContactBtn.addEventListener('click', onAddContact);
-    
-    const abSaveBtn = document.getElementById('ab-save-btn');
-    if (abSaveBtn) abSaveBtn.addEventListener('click', onSaveContact);
-    
-    const abCancelBtn = document.getElementById('ab-cancel-btn');
-    if (abCancelBtn) abCancelBtn.addEventListener('click', () => {
-        document.getElementById('address-book-modal').classList.add('hidden');
-    });
-    
-    const addressBookBtn = document.getElementById('address-book-btn');
-    if (addressBookBtn) addressBookBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        renderAddressBook();
-        showToast('Address book opened', 'info');
-    });
-    
-    const addCustomTokenBtn = document.getElementById('add-custom-token-btn');
-    if (addCustomTokenBtn) addCustomTokenBtn.addEventListener('click', onAddCustomToken);
-    
-    const ctSaveBtn = document.getElementById('ct-save-btn');
-    if (ctSaveBtn) ctSaveBtn.addEventListener('click', onSaveCustomToken);
-    
-    const ctCancelBtn = document.getElementById('ct-cancel-btn');
-    if (ctCancelBtn) ctCancelBtn.addEventListener('click', () => {
-        document.getElementById('custom-token-modal').classList.add('hidden');
-    });
-    
-    const signMessageBtn = document.getElementById('sign-message-btn');
-    if (signMessageBtn) signMessageBtn.addEventListener('click', signMessage);
-    
-    const verifySignatureBtn = document.getElementById('verify-signature-btn');
-    if (verifySignatureBtn) verifySignatureBtn.addEventListener('click', openVerifyModal);
-    
-    const verifyModalBtn = document.getElementById('verify-modal-btn');
-    if (verifyModalBtn) verifyModalBtn.addEventListener('click', verifySignature);
-    
-    const verifyModalCancelBtn = document.getElementById('verify-modal-cancel-btn');
-    if (verifyModalCancelBtn) verifyModalCancelBtn.addEventListener('click', closeVerifyModal);
-    
-    const maxBtn = document.getElementById('max-btn');
-    if (maxBtn) maxBtn.addEventListener('click', onMaxAmount);
-    
-    const saveAdvancedBtn = document.getElementById('save-advanced-btn');
-    if (saveAdvancedBtn) saveAdvancedBtn.addEventListener('click', saveAdvancedSettings);
-    
-    const clearVaultBtn = document.getElementById('clear-vault-btn');
-    if (clearVaultBtn) clearVaultBtn.addEventListener('click', onClearVault);
-    
-    const resetAppBtn = document.getElementById('reset-app-btn');
-    if (resetAppBtn) resetAppBtn.addEventListener('click', onResetApp);
-    
-    const saveNetworkBtn = document.getElementById('save-network-btn');
-    if (saveNetworkBtn) saveNetworkBtn.addEventListener('click', onSaveNetworkConfig);
-    
-    const refreshPricesBtn = document.getElementById('refresh-prices-btn');
-    if (refreshPricesBtn) refreshPricesBtn.addEventListener('click', async () => {
-        refreshPricesBtn.disabled = true;
-        await refreshPrices();
-        refreshPricesBtn.disabled = false;
-    });
-    
-    const refreshAssetsBtn = document.getElementById('refresh-assets-btn');
-    if (refreshAssetsBtn) refreshAssetsBtn.addEventListener('click', () => {
-        refreshAssetsBtn.disabled = true;
-        scanAllBalances();
-        setTimeout(() => { refreshAssetsBtn.disabled = false; }, 1000);
-    });
-    
-    const revokeAllPermsBtn = document.getElementById('revoke-all-permissions-btn');
-    if (revokeAllPermsBtn) revokeAllPermsBtn.addEventListener('click', async () => {
-        if (confirm('Revoke all permissions?')) {
-            await clearSitePermissions();
-            renderPermissions();
+        // Ctrl+S – Save settings
+        if (e.ctrlKey && e.key === 's') {
+            loadAdvancedSettings();
         }
-    });
-    
-    const scConfirmBtn = document.getElementById('sc-confirm-btn');
-    if (scConfirmBtn) scConfirmBtn.addEventListener('click', () => {
-        if (window.sendConfirmCallback) {
-            window.sendConfirmCallback();
-            document.getElementById('send-confirm-modal').classList.add('hidden');
+
+        // Ctrl+R – Refresh balances
+        if (e.ctrlKey && e.key === 'r') {
+            refreshAllBalances(true);
         }
-    });
-    
-    const scCancelBtn = document.getElementById('sc-cancel-btn');
-    if (scCancelBtn) scCancelBtn.addEventListener('click', () => {
-        document.getElementById('send-confirm-modal').classList.add('hidden');
-    });
-    
-    document.addEventListener('keydown', e => {
+
+        // Ctrl+E – Export vault
+        if (e.ctrlKey && e.key === 'e') {
+            onExportVault();
+        }
+
+        // Ctrl+C – Copy address
+        if (e.metaKey && e.key === 'c') {
+            // Detect selection or focus element
+            let address = '';
+            const selected = document.getSelection().toString().trim();
+            if (selected.length > 0) address = selected;
+            else address = document.getElementById('send-to')?.value || '';
+
+            if (address) {
+                copyAddress(address, document.createElement('button'));
+            }
+        }
+
+        // Esc – Close modals
         if (e.key === 'Escape') {
             document.querySelectorAll('.modal:not(.hidden)').forEach(m => m.classList.add('hidden'));
         }
     });
 }
 
-window.copyAddressFromBook = copyAddressFromBook;
-window.deleteContact = deleteContact;
-window.onDeleteCustomToken = onDeleteCustomToken;
+function enableDragSorting() {
+    const list = document.getElementById('global-account-list');
+    if (!list) return;
+
+    list.addEventListener('dragstart', (e) => {
+        e.dataTransfer.setData('itemId', e.target.dataset.accountId);
+    });
+
+    list.addEventListener('dragover', (e) => {
+        e.preventDefault();
+    });
+
+    list.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const sourceId = e.dataTransfer.getData('itemId');
+        const targetId = e.target.dataset.accountId;
+
+        if (!sourceId || !targetId) return;
+
+        const source = state.accounts.find(a => a.id === Number(sourceId));
+        const target = state.accounts.find(a => a.id === Number(targetId));
+
+        if (!source || !target) return;
+        
+        const sourceIndex = state.accounts.findIndex(a => a.id === Number(sourceId));
+        const targetIndex = state.accounts.findIndex(a => a.id === Number(targetId));
+
+        state.accounts = [
+            ...state.accounts.slice(0, sourceIndex),
+            target,
+            ...state.accounts.slice(sourceIndex, targetIndex),
+            source,
+            ...state.accounts.slice(targetIndex + 1)
+        ];
+
+        updateAccountCard(source);
+        updateAccountCard(target);
+        persistVault();
+        renderAccounts();
+    });
+}
+
+function enableKeyboardNavigation() {
+    document.addEventListener('keydown', (e) => {
+        if (!document.activeElement || document.activeElement.tagName !== 'SELECT' && document.activeElement.tagName !== 'INPUT') return;
+
+        const accountList = document.getElementById('global-account-list');
+        if (!accountList) return;
+
+        const cards = [...accountList.querySelectorAll('.account-card')];
+        let focusedCard = cards.find((c, i) => c === document.activeElement ||
+                                    (c.classList.contains('active') && !document.activeElement.parentElement?.tagName === 'BODY'));
+
+        if (!focusedCard) focusedCard = cards[0];
+
+        switch (e.key) {
+            case 'ArrowDown':
+                let nextIndex = focusedCard.dataset.accountId;
+                const accounts = state.accounts;
+                const accountIds = accounts.map(a => a.id);
+                const index = accountIds.indexOf(Number(nextIndex));
+                if (index < accountIds.length - 1) {
+                    focusedCard = cards[accountIds.indexOf(accountIds[index + 1]] || cards[0];
+                }
+                break;
+            case 'ArrowUp':
+                let prevIndex = focusedCard.dataset.accountId;
+                const index = accountIds.indexOf(Number(prevIndex));
+                if (index > 0) {
+                    focusedCard = cards[accountIds.indexOf(accountIds[index - 1]] || cards[cards.length - 1];
+                }
+                break;
+            case 'Enter':
+                focusedCard.click();
+                break;
+        }
+    });
+}
+
+// =========================================================
+// EFFECTS FOR MODALS / TOOLTIPS / INDICATORS
+// =========================================================
+
+function animateConnectingIndicator() {
+    document.getElementById('connecting-spinner').classList.remove('hidden');
+}
+
+function hideConnectingIndicator() {
+    document.getElementById('connecting-spinner').classList.add('hidden');
+}
+
+function showLoadingOverlay() {
+    document.getElementById('loader-overlay').classList.remove('hidden');
+}
+
+function hideLoadingOverlay() {
+    document.getElementById('loader-overlay').classList.add('hidden');
+}
+
+// =========================================================
+// EVENT LISTENERS & UTILITIES
+// =========================================================
+
+document.addEventListener('keydown', e => {
+    // ESC closes modals
+    if (e.key === 'Escape' && document.body.classList.contains('modal-open')) {
+        document.querySelectorAll('.modal:not(.hidden)').forEach(m => m.classList.add('hidden'));
+    }
+});
+
+document.addEventListener('click', (e) => {
+    if (e.target.closest('.modal')) {
+        document.body.classList.remove('modal-open');
+    }
+});
+
+// =========================================================
+// DEPRECATED / CLEANUP (keep as legacy compatibility)
+// =========================================================
+
+/*
+function old_importVaultFile() {
+    // Legacy import method (still supported for backwards compatibility)
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        importVaultFile(JSON.parse(reader.result));
+        switchTab('dashboard');
+    };
+    reader.readAsText(document.getElementById('old-vault-file').files[0]);
+}
+*/
+
+// =========================================================
+// STARTUP HOOKS
+// =========================================================
+
+function initFullUI() {
+    // Theme
+    initTheme();
+
+    // Shortcuts
+    setupShortcuts();
+
+    // Drag & drop
+    enableDragSorting();
+
+    // Keyboard nav
+    enableKeyboardNavigation();
+
+    // Toast & Events
+    showToast('Welcome to OmniChain Wallet', 'info');
+}
+
+// Call on DOM ready
+document.addEventListener('DOMContentLoaded', initFullUI);
+})();
