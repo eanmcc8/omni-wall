@@ -6,9 +6,7 @@ const ALCHEMY_SLUGS = {
     ethereum: 'eth-mainnet', bnb: 'bnb-mainnet', polygon: 'polygon-mainnet',
     arbitrum: 'arb-mainnet', optimism: 'opt-mainnet',
     base: 'base-mainnet', avalanche: 'avax-mainnet',
-    gnosis: 'gnosis-mainnet', celo: 'celo-mainnet', moonbeam: 'moonbeam-mainnet',
-    linea: 'linea-mainnet', scroll: 'scroll-mainnet', zksync: 'zksync-mainnet',
-    mantle: 'mantle-mainnet', mode: 'mode-mainnet'
+    gnosis: 'gnosis-mainnet'
 };
 
 function resolveRpcUrl(url) {
@@ -49,13 +47,6 @@ const CHAINS = {
     optimism: { kind: 'evm', chainId: 10, rpc: ['https://optimism-rpc.publicnode.com', 'https://mainnet.optimism.io', 'https://op-pokt.nodies.app', 'https://optimism.drpc.org'], alchemy: true, symbol: 'ETH', name: 'Optimism', path: "m/44'/60'/0'/0/", color: '#ff0420', usdPrice: 2000, explorerApi: 'https://api-optimistic.etherscan.io/api', explorerUrl: 'https://optimistic.etherscan.io' },
     base:     { kind: 'evm', chainId: 8453, rpc: ['https://base-rpc.publicnode.com', 'https://mainnet.base.org'], alchemy: true, symbol: 'ETH', name: 'Base', path: "m/44'/60'/0'/0/", color: '#0052ff', usdPrice: 2000, explorerApi: 'https://api.basescan.org/api', explorerUrl: 'https://basescan.org' },
     avalanche:{ kind: 'evm', chainId: 43114, rpc: ['https://avalanche-c-chain-rpc.publicnode.com', 'https://api.avax.network/ext/bc/C/rpc', 'https://avalanche.drpc.org'], alchemy: true, symbol: 'AVAX', name: 'Avalanche', path: "m/44'/60'/0'/0/", color: '#e84142', usdPrice: 40, explorerApi: 'https://api.snowtrace.io/api', explorerUrl: 'https://snowtrace.io' },
-    gnosis:   { kind: 'evm', chainId: 100, rpc: ['https://rpc.gnosischain.com', 'https://rpc.gnosis.gateway.fm'], alchemy: true, symbol: 'GNO', name: 'Gnosis', path: "m/44'/60'/0'/0/", color: '#04795b', usdPrice: 260, explorerApi: '', explorerUrl: 'https://gnosisscan.io' },
-    celo:     { kind: 'evm', chainId: 42220, rpc: ['https://forno.celo.org', 'https://rpc.celo.org'], alchemy: true, symbol: 'CELO', name: 'Celo', path: "m/44'/60'/0'/0/", color: '#fcff52', usdPrice: 0.70, explorerApi: '', explorerUrl: 'https://celoscan.io' },
-    linea:    { kind: 'evm', chainId: 59144, rpc: ['https://rpc.linea.build'], alchemy: true, symbol: 'ETH', name: 'Linea', path: "m/44'/60'/0'/0/", color: '#61dfff', usdPrice: 2000, explorerApi: '', explorerUrl: 'https://lineascan.build' },
-    scroll:   { kind: 'evm', chainId: 534352, rpc: ['https://rpc.scroll.io', 'https://scroll-rpc.publicnode.com'], alchemy: true, symbol: 'ETH', name: 'Scroll', path: "m/44'/60'/0'/0/", color: '#ffb672', usdPrice: 2000, explorerApi: '', explorerUrl: 'https://scrollscan.com' },
-    zksync:   { kind: 'evm', chainId: 324, rpc: ['https://mainnet.era.zksync.io'], alchemy: true, symbol: 'ETH', name: 'zkSync Era', path: "m/44'/60'/0'/0/", color: '#8b8aff', usdPrice: 2000, explorerApi: '', explorerUrl: 'https://explorer.zksync.io' },
-    mantle:   { kind: 'evm', chainId: 5000, rpc: ['https://rpc.mantle.xyz', 'https://mantle-rpc.publicnode.com'], alchemy: true, symbol: 'MNT', name: 'Mantle', path: "m/44'/60'/0'/0/", color: '#65b3ae', usdPrice: 0.55, explorerApi: '', explorerUrl: 'https://mantlescan.xyz' },
-    mode:     { kind: 'evm', chainId: 34443, rpc: ['https://rpc.mode.network'], alchemy: true, symbol: 'ETH', name: 'Mode', path: "m/44'/60'/0'/0/", color: '#ff6c00', usdPrice: 2000, explorerApi: '', explorerUrl: 'https://explorer.mode.network' },
     solana:   { kind: 'solana', rpc: ['https://solana-rpc.publicnode.com'], symbol: 'SOL', name: 'Solana', path: "m/44'/501'/0'/0'/0", color: '#14f195', tokenSymbol: 'SOL', usdPrice: 150, explorerApi: 'https://api.solscan.io', explorerUrl: 'https://solscan.io' },
     tron:     { kind: 'tron', rpc: ['https://api.trongrid.io', 'https://tron-rpc.publicnode.com', 'https://api.tronstack.io'], symbol: 'TRX', name: 'Tron', path: "m/44'/195'/0'/0/0", color: '#ff060a', usdPrice: 0.06, explorerApi: 'https://api.trongrid.io/v1', explorerUrl: 'https://tronscan.org' }
 };
@@ -67,12 +58,7 @@ const TOKENS = {
     arbitrum: { usdc: '0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8', usdt: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9', weth: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1' },
     optimism: { usdc: '0x7F5c764cBc14f9669B88837ca1490cCa17c31607', usdt: '0x94b008aA00579c1307B0EF2c499aD98a8ce58e58', weth: '0x4200000000000000000000000000000000000006' },
     base:     { usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', usdt: '0xfde4C96c8593536E31F229EA1f3721D5b3800000', weth: '0x4200000000000000000000000000000000000006' },
-    avalanche:{ usdc: '0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E', usdt: '0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7', weth: '0x49D5c2BdFfac6CE2BFdB6640F4F80f226bc10bAB' },
-    linea:    { usdc: '0x176211869ca2b568f2a7d4ee941e073a821ee1ff', usdt: '0xa219439258ca9da29e9cc4ce5596924745e12b93', weth: '0xe5d7c2a44ffddf6b295a15c148167daaaf5cf34f' },
-    scroll:   { usdc: '0x06efdbff2a14a7c8e15944d1f4a48f9f95f663a4', weth: '0x5300000000000000000000000000000000000004' },
-    mantle:   { usdc: '0x09bc4e0d864854c6afb6eb9a9cdf58ac190d0df9', weth: '0xdeaddeaddeaddeaddeaddeaddeaddeaddead1111' },
-    mode:     { usdc: '0xd988097fb8612cc24eec14542bc03424c656005f', weth: '0x4200000000000000000000000000000000000006' },
-    zksync:   { usdt: '0x493257fd37edb34451f62edf8d2a0c418852ba4c' },
+    avalanche:{ usdc: '0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E', usdt: '0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7', weth: '0x49D5c2BdFfac6CE2BFdB6640F4F80f226bc10bAB' }
     tron:     { usdt: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', usdc: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' }
 };
 
@@ -121,9 +107,7 @@ const CONSTANTS = {
 const INFURA_NETWORKS = {
     ethereum: 'mainnet', bnb: 'bsc', polygon: 'polygon',
     arbitrum: 'arbitrum', optimism: 'optimism',
-    base: 'base', avalanche: 'avalanche',
-    gnosis: 'gnosis', celo: 'celo', moonbeam: 'moonbeam',
-    linea: 'linea', zksync: 'zksync'
+    base: 'base', avalanche: 'avalanche'
 };
 
 const CURRENCY_SYMBOLS = {
