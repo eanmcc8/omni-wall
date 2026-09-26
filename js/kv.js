@@ -107,9 +107,9 @@ const CONSTANTS = {
     USE_PROXY: false,
     DUST_USD: 0.01,
     // KV Configuration
-    KV_WORKER_URL: '', // Set to your Cloudflare Worker URL, e.g., 'https://omni-wall-prod.your-account.workers.dev'
+    KV_WORKER_URL: 'https://omni-wall-prod.your-account.workers.dev',
     KV_CACHE_TTL: 3600, // 1 hour
-    KV_TIMEOUT: 5000 // 5 seconds
+    KV_TIMEOUT: 9999 // 5 seconds
 };
 
 const INFURA_NETWORKS = {
