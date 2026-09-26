@@ -96,7 +96,7 @@
                         <div class="hero-copy">
                             <span class="eyebrow">Portfolio Overview</span>
                             <h3>Multi-Chain Portfolio</h3>
-                            <p class="hint-text">Live balances across 9 mainnet chains — native coins + USDC, USDT, WETH</p>
+                            <p class="hint-text">Live balances across 23 mainnet chains — native coins + USDC, USDT, WETH</p>
                         </div>
                         <div class="stat-row">
                             <div class="stat-badge">
@@ -509,23 +509,79 @@
                         </button>
                     </div>
                     <p class="hint-text">Configure advanced settings for the wallet.</p>
+
                     <div class="field">
-                        <label for="api-key-input">Explorer API Key</label>
-                        <input type="text" id="api-key-input" placeholder="Etherscan / TronGrid API key (optional)" spellcheck="false">
+                        <label for="alchemy-key-input">Alchemy API Key</label>
+                        <input type="text" id="alchemy-key-input" placeholder="e.g. KedNAmevgHvaNnMRCnWDq" spellcheck="false" autocomplete="off">
+                        <p class="hint-text" style="margin-top:4px"><strong>One key covers all 15 EVM chains</strong> (Ethereum, BNB, Polygon, Arbitrum, Optimism, Base, Avalanche, Gnosis, Celo, Moonbeam, Linea, Scroll, zkSync, Mantle, Mode). Used as the preferred RPC; public endpoints remain as fallback.</p>
                     </div>
+
+                    <div class="field">
+                        <label for="infura-key-input">Infura API Key</label>
+                        <input type="text" id="infura-key-input" placeholder="Optional — fallback if no Alchemy key" spellcheck="false" autocomplete="off">
+                        <p class="hint-text" style="margin-top:4px">Also covers all 7 EVM chains. Only used when no Alchemy key is set.</p>
+                    </div>
+
+                    <div class="field">
+                        <label for="trongrid-key-input">TronGrid API Key</label>
+                        <input type="text" id="trongrid-key-input" placeholder="Optional — sent as TRON-PRO-API-KEY header" spellcheck="false" autocomplete="off">
+                        <p class="hint-text" style="margin-top:4px">Raises TronGrid rate limits. Does not apply to RPC calls, only TronGrid API requests.</p>
+                    </div>
+
+                    <div class="field">
+                        <label for="api-key-input">Etherscan / Explorer API Key</label>
+                        <input type="text" id="api-key-input" placeholder="Etherscan-family key (optional)" spellcheck="false" autocomplete="off">
+                        <p class="hint-text" style="margin-top:4px">Used to fetch transaction history from Etherscan and other block explorers.</p>
+                    </div>
+
                     <div class="field">
                         <label for="proxy-url-input">CORS Proxy URL</label>
-                        <input type="url" id="proxy-url-input" placeholder="https://corsproplease.com/proxy?url=" spellcheck="false">
-                        <p class="hint-text" style="margin-top:4px">Optional proxy for bypassing CORS restrictions. Leave empty to disable.</p>
+                        <input type="url" id="proxy-url-input" placeholder="https://your-proxy.example.com/" spellcheck="false">
+                        <p class="hint-text" style="margin-top:4px">Optional proxy that relays JSON-RPC POST requests. Leave empty to disable.</p>
                     </div>
                     <div class="grid-2">
                         <div class="field">
                             <label for="rpc-timeout-input">RPC Timeout (ms)</label>
-                            <input type="number" id="rpc-timeout-input" min="1000" max="60000" step="1000" value="10000">
+                            <input type="number" id="rpc-timeout-input" min="2000" max="60000" step="1000" value="12000">
                         </div>
                         <div class="field">
                             <label for="scan-concurrency-input">Scan Concurrency</label>
                             <input type="number" id="scan-concurrency-input" min="1" max="20" value="5">
+                        </div>
+                        <div class="field">
+                            <label for="derivation-count-input">Derivation Count</label>
+                            <input type="number" id="derivation-count-input" min="1" max="20" value="3">
+                            <p class="hint-text" style="margin-top:4px">Wallets derived per seed per chain. Higher = far more wallets to scan.</p>
+                        </div>
+                        <div class="field">
+                            <label for="scan-interval-input">Auto-Refresh (seconds)</label>
+                            <input type="number" id="scan-interval-input" min="15" max="3600" step="15" value="60">
+                        </div>
+                        <div class="field">
+                            <label for="dust-usd-input">Dust Threshold (USD)</label>
+                            <input type="number" id="dust-usd-input" min="0" max="1000" step="0.01" value="0.01">
+                            <p class="hint-text" style="margin-top:4px">Holdings below this value are hidden from the assets table.</p>
+                        </div>
+                        <div class="field">
+                            <label for="max-rpc-retries-input">Max RPC Retries</label>
+                            <input type="number" id="max-rpc-retries-input" min="0" max="10" value="5">
+                            <p class="hint-text" style="margin-top:4px">Max retries per RPC endpoint before giving up.</p>
+                        </div>
+                        <div class="field">
+                            <label for="price-cache-input">Price Cache Duration (ms)</label>
+                            <input type="number" id="price-cache-input" min="1000" max="3600000" step="1000" value="10000">
+                            <p class="hint-text" style="margin-top:4px">How long to cache token prices before refetching.</p>
+                        </div>
+                        <div class="field">
+                            <label for="default-currency-input">Default Currency</label>
+                            <select id="default-currency-input">
+                                <option value="usd">USD ($)</option>
+                                <option value="eur">EUR (€)</option>
+                                <option value="gbp">GBP (£)</option>
+                                <option value="jpy">JPY (¥)</option>
+                                <option value="btc">BTC (₿)</option>
+                                <option value="eth">ETH (Ξ)</option>
+                            </select>
                         </div>
                     </div>
                     <label class="switch" for="use-proxy-toggle">
