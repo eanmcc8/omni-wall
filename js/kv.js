@@ -1,7 +1,12 @@
 /**
- * kv.js — chain/token configuration with Cloudflare KV storage backend
- * Drop-in replacement for config.js that stores cache in KV instead of browser
- * Usage: Replace <script src="js/config.js"></script> with <script src="js/kv.js"></script>
+ * kv.js — chain/token configuration with persistent caching
+ * Drop-in replacement for config.js
+ * Features:
+ * - IndexedDB for persistent browser cache (survives reload)
+ * - Cloudflare KV for distributed edge caching
+ * - Non-blocking concurrent request queue
+ * - Immediate fallback to local generation
+ * - No browser freeze on multiple imports
  */
 
 const API_KEY_TOKEN = '{API_KEY}';
@@ -92,13 +97,13 @@ const CONSTANTS = {
     DERIVATION_COUNT: 3,
     NATIVE_GAS_LIMIT: 21000n,
     TRON_SUN_PER_TRX: 1e6,
-    SCAN_CONCURRENCY: 10,
+    SCAN_CONCURRENCY: 3, // Reduced to prevent freeze
     VAULT_STORAGE_KEY: 'omni_vault',
     THEME_STORAGE_KEY: 'omni_theme',
     DEFAULT_CURRENCY: 'usd',
     PRICE_CACHE_DURATION: 10000,
     MAX_RPC_RETRIES: 5,
-    RPC_TIMEOUT: 12000,
+    RPC_TIMEOUT: 3000, // Reduced to 3s for faster fallback
     NETWORK_API_KEY: '',
     ALCHEMY_KEY: 'KedNAmevgHvaNnMRCnWDq',
     INFURA_KEY: 'f67ee0c6843b441787ed722460b29b7c',
@@ -106,10 +111,9 @@ const CONSTANTS = {
     CORS_PROXY: '',
     USE_PROXY: false,
     DUST_USD: 0.01,
-    // KV Configuration
-    KV_WORKER_URL: 'https://omni-wall-prod.your-account.workers.dev',
-    KV_CACHE_TTL: 3600, // 1 hour
-    KV_TIMEOUT: 9999 // 5 seconds
+    KV_WORKER_URL: '', // Set to your worker URL or leave empty
+    KV_CACHE_TTL: 86400, // 24 hours in IndexedDB
+    KV_TIMEOUT: 2000 // 2 seconds - fail fast to local fallback
 };
 
 const INFURA_NETWORKS = {
@@ -123,99 +127,265 @@ const CURRENCY_SYMBOLS = {
 };
 
 /**
- * KV Storage Manager - Handles all Cloudflare KV operations
- * Uses L1 local cache + L2 KV store for RPC URLs
+ * IndexedDB Manager - Persistent browser cache
  */
-class KVStorageManager {
-    constructor(workerUrl, kvTimeout = 5000) {
-        this.workerUrl = workerUrl;
-        this.kvTimeout = kvTimeout;
-        this.localCache = new Map(); // L1: In-memory cache
-        this.workerAvailable = !!workerUrl; // Only use if URL is set
-        this.cacheKeys = {
-            rpc: 'rpc:',
-            health: 'health:',
-            tokens: 'tokens:',
-            chains: 'chains:'
-        };
+class IndexedDBCache {
+    constructor(dbName = 'omni_wall', storeName = 'rpc_cache') {
+        this.dbName = dbName;
+        this.storeName = storeName;
+        this.db = null;
+        this.ready = this._initDb();
+    }
+
+    async _initDb() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(this.dbName, 1);
+            
+            request.onerror = () => {
+                console.warn('IndexedDB failed, using memory cache');
+                resolve(null);
+            };
+
+            request.onsuccess = () => {
+                this.db = request.result;
+                resolve(this.db);
+            };
+
+            request.onupgradeneeded = (e) => {
+                const db = e.target.result;
+                if (!db.objectStoreNames.contains(this.storeName)) {
+                    db.createObjectStore(this.storeName, { keyPath: 'key' });
+                }
+            };
+        });
+    }
+
+    async get(key) {
+        await this.ready;
+        if (!this.db) return null;
+
+        return new Promise((resolve) => {
+            const transaction = this.db.transaction([this.storeName], 'readonly');
+            const store = transaction.objectStore(this.storeName);
+            const request = store.get(key);
+
+            request.onsuccess = () => {
+                const result = request.result;
+                // Check if expired
+                if (result && result.expiry > Date.now()) {
+                    resolve(result.value);
+                } else {
+                    resolve(null);
+                }
+            };
+
+            request.onerror = () => resolve(null);
+        });
+    }
+
+    async set(key, value, ttl = CONSTANTS.KV_CACHE_TTL) {
+        await this.ready;
+        if (!this.db) return;
+
+        return new Promise((resolve) => {
+            const transaction = this.db.transaction([this.storeName], 'readwrite');
+            const store = transaction.objectStore(this.storeName);
+            store.put({
+                key,
+                value,
+                expiry: Date.now() + (ttl * 1000)
+            });
+
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => resolve();
+        });
+    }
+
+    async clear() {
+        await this.ready;
+        if (!this.db) return;
+
+        return new Promise((resolve) => {
+            const transaction = this.db.transaction([this.storeName], 'readwrite');
+            const store = transaction.objectStore(this.storeName);
+            store.clear();
+            transaction.oncomplete = () => resolve();
+        });
+    }
+}
+
+/**
+ * Concurrent Request Queue - Prevents browser freeze
+ * Limits parallel requests to SCAN_CONCURRENCY
+ */
+class RequestQueue {
+    constructor(concurrency = CONSTANTS.SCAN_CONCURRENCY) {
+        this.concurrency = concurrency;
+        this.running = 0;
+        this.queue = [];
+    }
+
+    async run(fn) {
+        // If not at concurrency limit, run immediately
+        if (this.running < this.concurrency) {
+            this.running++;
+            try {
+                return await fn();
+            } finally {
+                this.running--;
+                this._processQueue();
+            }
+        }
+
+        // Otherwise, queue it
+        return new Promise((resolve, reject) => {
+            this.queue.push(async () => {
+                this.running++;
+                try {
+                    resolve(await fn());
+                } catch (err) {
+                    reject(err);
+                } finally {
+                    this.running--;
+                    this._processQueue();
+                }
+            });
+        });
+    }
+
+    _processQueue() {
+        if (this.queue.length > 0 && this.running < this.concurrency) {
+            const fn = this.queue.shift();
+            fn().catch(err => console.error('Queue error:', err));
+        }
+    }
+}
+
+/**
+ * Cache Manager - Coordinates L1 (IndexedDB) + L2 (KV) + L3 (Local generation)
+ */
+class CacheManager {
+    constructor() {
+        this.indexedDb = new IndexedDBCache();
+        this.memoryCache = new Map(); // L0: Fast memory lookup
+        this.queue = new RequestQueue(CONSTANTS.SCAN_CONCURRENCY);
+        this.workerUrl = CONSTANTS.KV_WORKER_URL;
     }
 
     /**
-     * Get RPC URLs with KV storage (L1 -> L2 -> Generate)
+     * Get RPC URLs with 3-tier caching (non-blocking)
+     * L0 (Memory) -> L1 (IndexedDB) -> L2 (KV) -> L3 (Local generation)
      */
     async getRpcUrls(chainKey) {
-        const cacheKey = this.cacheKeys.rpc + chainKey;
-
-        // L1: In-memory cache (instant)
-        if (this.localCache.has(cacheKey)) {
-            return this.localCache.get(cacheKey);
-        }
-
-        // L2: Cloudflare KV (if available)
-        if (this.workerAvailable) {
-            try {
-                const rpcs = await this._fetchFromKv(chainKey);
-                if (rpcs && rpcs.length > 0) {
-                    this.localCache.set(cacheKey, rpcs);
-                    return rpcs;
-                }
-            } catch (err) {
-                console.warn(`KV fetch failed for ${chainKey}:`, err.message);
-                this.workerAvailable = false; // Fallback to local generation
+        return this.queue.run(async () => {
+            // L0: Memory cache
+            const memKey = `rpc:${chainKey}`;
+            if (this.memoryCache.has(memKey)) {
+                return this.memoryCache.get(memKey);
             }
-        }
 
-        // L3: Generate locally and store in KV
-        const rpcs = this._generateRpcs(chainKey);
-        if (this.workerAvailable) {
-            this._storeInKv(chainKey, rpcs).catch(err => 
-                console.warn(`Failed to store ${chainKey} in KV:`, err)
-            );
-        }
-        this.localCache.set(cacheKey, rpcs);
-        return rpcs;
+            // L1: IndexedDB (persistent, survives reload)
+            const cached = await this.indexedDb.get(memKey);
+            if (cached && Array.isArray(cached)) {
+                this.memoryCache.set(memKey, cached);
+                // Background refresh from KV
+                this._refreshFromKvBackground(chainKey, memKey);
+                return cached;
+            }
+
+            // L3: Generate locally (fast fallback)
+            const rpcs = this._generateRpcs(chainKey);
+            
+            // Background: Try to fetch from KV and update caches
+            this._backgroundFetchAndCache(chainKey, memKey, rpcs);
+
+            // Return immediately
+            return rpcs;
+        });
     }
 
     /**
-     * Get multiple chains' RPCs in parallel
+     * Get multiple chains in parallel (non-blocking queue)
      */
     async getMultiChainRpcs(chainKeys) {
+        const promises = chainKeys.map(key => this.getRpcUrls(key));
         const results = {};
-        const promises = chainKeys.map(async (key) => {
-            try {
-                results[key] = await this.getRpcUrls(key);
-            } catch (err) {
-                console.error(`Failed to get RPCs for ${key}:`, err);
-                results[key] = [];
-            }
+
+        // Use Promise.allSettled to not block on failures
+        const settled = await Promise.allSettled(promises);
+        chainKeys.forEach((key, i) => {
+            results[key] = settled[i].status === 'fulfilled' ? settled[i].value : [];
         });
 
-        await Promise.all(promises);
         return results;
     }
 
     /**
-     * Fetch RPC URLs from Cloudflare KV Worker
+     * Background: Try KV, update IndexedDB if successful
      */
-    async _fetchFromKv(chainKey) {
-        if (!this.workerUrl) return null;
+    async _backgroundFetchAndCache(chainKey, memKey, fallback) {
+        if (!this.workerUrl) {
+            // Store local generation in IndexedDB for persistence
+            await this.indexedDb.set(memKey, fallback);
+            this.memoryCache.set(memKey, fallback);
+            return;
+        }
 
+        try {
+            const rpcs = await this._fetchFromKvWithTimeout(chainKey);
+            if (rpcs && rpcs.length > 0) {
+                // Update all caches
+                this.memoryCache.set(memKey, rpcs);
+                await this.indexedDb.set(memKey, rpcs);
+                return rpcs;
+            }
+        } catch (err) {
+            // Silently fail - already using fallback
+        }
+
+        // Store fallback in IndexedDB
+        this.memoryCache.set(memKey, fallback);
+        await this.indexedDb.set(memKey, fallback);
+    }
+
+    /**
+     * Background refresh: Try KV without blocking
+     */
+    async _refreshFromKvBackground(chainKey, memKey) {
+        if (!this.workerUrl) return;
+
+        // Don't await - run in background
+        (async () => {
+            try {
+                const rpcs = await this._fetchFromKvWithTimeout(chainKey);
+                if (rpcs && rpcs.length > 0) {
+                    this.memoryCache.set(memKey, rpcs);
+                    await this.indexedDb.set(memKey, rpcs);
+                }
+            } catch (err) {
+                // Ignore errors
+            }
+        })();
+    }
+
+    /**
+     * Fetch from KV with short timeout (fail fast)
+     */
+    async _fetchFromKvWithTimeout(chainKey) {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), this.kvTimeout);
+        const timeoutId = setTimeout(() => controller.abort(), CONSTANTS.KV_TIMEOUT);
 
         try {
             const response = await fetch(
                 `${this.workerUrl}/api/rpcs/${chainKey}`,
                 {
                     signal: controller.signal,
-                    headers: { 'Content-Type': 'application/json' }
+                    headers: { 'Content-Type': 'application/json' },
+                    cache: 'force-cache' // Use browser cache if available
                 }
             );
 
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const data = await response.json();
             return data.rpcs || [];
         } finally {
@@ -224,28 +394,7 @@ class KVStorageManager {
     }
 
     /**
-     * Store RPC URLs in Cloudflare KV Worker
-     */
-    async _storeInKv(chainKey, rpcs) {
-        if (!this.workerUrl) return;
-
-        try {
-            await fetch(`${this.workerUrl}/api/rpcs/${chainKey}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    chainKey,
-                    rpcs,
-                    timestamp: Date.now()
-                })
-            });
-        } catch (err) {
-            console.warn(`Failed to store in KV:`, err);
-        }
-    }
-
-    /**
-     * Generate RPC URLs locally (combines all sources)
+     * Generate RPC URLs locally
      */
     _generateRpcs(chainKey) {
         const chain = CHAINS[chainKey];
@@ -259,164 +408,87 @@ class KVStorageManager {
     }
 
     /**
-     * Report RPC health status
+     * Clear all caches
      */
-    async recordRpcHealth(rpcUrl, isHealthy) {
-        if (!this.workerAvailable) return;
-
-        try {
-            await fetch(`${this.workerUrl}/api/health`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ rpcUrl, healthy: isHealthy })
-            });
-        } catch (err) {
-            console.warn('Failed to report health:', err);
-        }
+    async clearAll() {
+        this.memoryCache.clear();
+        await this.indexedDb.clear();
     }
 
     /**
-     * Warm up cache for all chains
-     */
-    async warmCache() {
-        const chainKeys = Object.keys(CHAINS);
-        console.log(`Warming KV cache for ${chainKeys.length} chains...`);
-
-        const batchSize = 5;
-        for (let i = 0; i < chainKeys.length; i += batchSize) {
-            const batch = chainKeys.slice(i, i + batchSize);
-            await Promise.all(batch.map(key => this.getRpcUrls(key)));
-        }
-        console.log('Cache warm-up complete');
-    }
-
-    /**
-     * Clear local cache
-     */
-    clearLocalCache() {
-        this.localCache.clear();
-    }
-
-    /**
-     * Get cache statistics
+     * Get statistics
      */
     getStats() {
         return {
-            localCacheSize: this.localCache.size,
-            workerUrl: this.workerUrl,
-            workerAvailable: this.workerAvailable,
-            cachedChains: Array.from(this.localCache.keys())
-                .filter(k => k.startsWith(this.cacheKeys.rpc))
-                .map(k => k.replace(this.cacheKeys.rpc, ''))
+            memoryCacheSize: this.memoryCache.size,
+            queueSize: this.queue.queue.length,
+            running: this.queue.running,
+            workerUrl: this.workerUrl
         };
     }
 }
 
-/**
- * Initialize KV storage manager
- * Auto-initializes if KV_WORKER_URL is configured in CONSTANTS
- */
-let kvManager = null;
+// Global cache manager instance
+let cacheManager = null;
 
-function initKvManager() {
-    if (!kvManager && CONSTANTS.KV_WORKER_URL) {
-        kvManager = new KVStorageManager(
-            CONSTANTS.KV_WORKER_URL,
-            CONSTANTS.KV_TIMEOUT
-        );
+function initCacheManager() {
+    if (!cacheManager) {
+        cacheManager = new CacheManager();
     }
-    return kvManager;
+    return cacheManager;
 }
 
 /**
- * Public API - Wrapper functions that use KV if available
+ * Public API - Non-blocking, fast fallback
  */
 const KVConfig = {
     /**
-     * Get RPC URLs for a chain
-     * Usage: await KVConfig.getRpcUrls('ethereum')
+     * Get RPC URLs for a single chain (non-blocking)
+     * Returns immediately with cached or locally generated URLs
      */
     async getRpcUrls(chainKey) {
-        const manager = initKvManager();
-        if (manager) {
-            return manager.getRpcUrls(chainKey);
-        }
-        // Fallback to local generation
-        return [
-            ...chainRpcs(CHAINS[chainKey]),
-            ...alchemyRpcs(chainKey),
-            ...infuraRpcs(chainKey)
-        ].filter(Boolean);
+        const manager = initCacheManager();
+        return manager.getRpcUrls(chainKey);
     },
 
     /**
-     * Get RPC URLs for multiple chains
-     * Usage: await KVConfig.getMultiChainRpcs(['ethereum', 'polygon', 'arbitrum'])
+     * Get RPC URLs for multiple chains (concurrent, non-blocking)
+     * Best for importing multiple networks at once
      */
     async getMultiChainRpcs(chainKeys) {
-        const manager = initKvManager();
-        if (manager) {
-            return manager.getMultiChainRpcs(chainKeys);
-        }
-        // Fallback to local generation
-        const results = {};
-        for (const key of chainKeys) {
-            results[key] = [
-                ...chainRpcs(CHAINS[key]),
-                ...alchemyRpcs(key),
-                ...infuraRpcs(key)
-            ].filter(Boolean);
-        }
-        return results;
+        const manager = initCacheManager();
+        return manager.getMultiChainRpcs(chainKeys);
     },
 
     /**
-     * Report RPC health
+     * Clear all caches
      */
-    async reportHealth(rpcUrl, isHealthy) {
-        const manager = initKvManager();
-        if (manager) {
-            await manager.recordRpcHealth(rpcUrl, isHealthy);
-        }
-    },
-
-    /**
-     * Warm up KV cache
-     */
-    async warmCache() {
-        const manager = initKvManager();
-        if (manager) {
-            await manager.warmCache();
-        }
+    async clearCache() {
+        const manager = initCacheManager();
+        await manager.clearAll();
     },
 
     /**
      * Get cache statistics
      */
     getStats() {
-        const manager = initKvManager();
-        if (manager) {
-            return manager.getStats();
-        }
-        return { localCacheSize: 0, workerAvailable: false };
+        const manager = initCacheManager();
+        return manager.getStats();
     },
 
     /**
-     * Configure KV worker URL
+     * Set Cloudflare Worker URL
      */
     setWorkerUrl(url) {
         CONSTANTS.KV_WORKER_URL = url;
-        kvManager = null; // Reset manager to reinitialize with new URL
-        return initKvManager();
+        const manager = initCacheManager();
+        manager.workerUrl = url;
     }
 };
 
-// Auto-initialize if worker URL is already configured
+// Auto-init on load
 if (typeof window !== 'undefined') {
     window.addEventListener('DOMContentLoaded', () => {
-        if (CONSTANTS.KV_WORKER_URL) {
-            console.log('Initializing KV cache...');
-            initKvManager();
-        }
+        initCacheManager();
     });
 }
