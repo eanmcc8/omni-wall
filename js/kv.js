@@ -1,374 +1,436 @@
 /**
- * kv.js — High-performance Cloudflare Workers KV Client
- * 
- * Purpose: Offload RPC configuration and metadata to Edge KV to reduce 
- *          browser localStorage/indexeddb contention and prevent freezes.
- * 
- * Architecture:
- *   1. Memory Cache (L0) - Immediate access, volatile.
- *   2. Cloudflare KV (L1) - Persistent, distributed via Worker.
- *   3. Local Defaults (L2) - Hardcoded fallback if network fails.
- * 
- * Requirements:
- *   - Cloudflare Worker proxy endpoint exposing KV access.
- *   - Secure auth token handling.
+ * kv.js — chain/token configuration with persistent caching
+ * FIXED: Concurrency lock bug, IndexedDB ready check, multi-seed freeze prevention
  */
 
-(function() {
-    'use strict';
+const API_KEY_TOKEN = '{API_KEY}';
 
-    // =========================================================
-    // CONFIGURATION
-    // =========================================================
+const ALCHEMY_SLUGS = {
+    ethereum: 'eth-mainnet', bnb: 'bnb-mainnet', polygon: 'polygon-mainnet',
+    arbitrum: 'arb-mainnet', optimism: 'opt-mainnet',
+    base: 'base-mainnet', avalanche: 'avax-mainnet',
+    gnosis: 'gnosis-mainnet'
+};
 
-    const KV_ENV = {
-        workerUrl: 'http://omni-wall.loaded.workers.dev', // e.g. https://your-worker.your-subdomain.workers.dev
-        authToken: '', // Shared secret or JWT for KV access
-        timeout: 5000, // Fail fast
-        retryMax: 3,
-        ttl: 3600, // TTL for RPC configs in seconds
-        prefix: 'rpc_',
-        enabled: true
-    };
+function resolveRpcUrl(url) {
+    if (typeof url !== 'string' || !url.includes(API_KEY_TOKEN)) return url;
+    const key = (CONSTANTS.NETWORK_API_KEY || '').trim();
+    if (!key) return null;
+    return url.replace(API_KEY_TOKEN, key);
+}
 
-    // =========================================================
-    // CORE KV CLIENT
-    // =========================================================
+function infuraRpcs(chainKey) {
+    const net = INFURA_NETWORKS[chainKey];
+    const key = (CONSTANTS.INFURA_KEY || '').trim();
+    if (!net || !key) return [];
+    return [`https://${net}.infura.io/v3/${key}`];
+}
 
-    class KVClient {
-        constructor() {
-            this.cache = new Map(); // L0 Memory Cache
-            this.pending = new Map(); // Prevent duplicate inflight requests
-            this.enabled = KV_ENV.enabled;
-        }
+function chainRpcs(chainObj) {
+    const out = [];
+    for (const url of chainObj.rpc || []) {
+        const resolved = resolveRpcUrl(url);
+        if (resolved) out.push(resolved);
+    }
+    return out;
+}
 
-        async _request(method, key, data = null) {
-            if (!this.enabled || !KV_ENV.workerUrl) {
-                return null;
-            }
+function alchemyRpcs(chainKey) {
+    const slug = ALCHEMY_SLUGS[chainKey];
+    const key = (CONSTANTS.ALCHEMY_KEY || '').trim();
+    if (!slug || !key) return [];
+    return [`https://${slug}.g.alchemy.com/v2/${key}`];
+}
 
-            // Check memory cache first
-            const cached = this.cache.get(key);
-            if (cached && Date.now() < cached.expiry) {
-                return cached.value;
-            }
+const CHAINS = {
+    ethereum: { kind: 'evm', chainId: 1, rpc: ['https://ethereum-rpc.publicnode.com', 'https://eth.drpc.org', 'https://rpc.flashbots.net'], alchemy: true, symbol: 'ETH', name: 'Ethereum', path: "m/44'/60'/0'/0/", color: '#627eea' },
+    bnb:      { kind: 'evm', chainId: 56, rpc: ['https://bsc-rpc.publicnode.com', 'https://bsc-dataseed1.defibit.io', 'https://bsc.publicnode.com'], alchemy: true, symbol: 'BNB', name: 'BNB Chain', path: "m/44'/60'/0'/0/", color: '#f3ba2f' },
+    polygon:  { kind: 'evm', chainId: 137, rpc: ['https://polygon-bor-rpc.publicnode.com', 'https://polygon.drpc.org'], alchemy: true, symbol: 'POL', name: 'Polygon', path: "m/44'/60'/0'/0/", color: '#8247e5' },
+    arbitrum: { kind: 'evm', chainId: 42161, rpc: ['https://arbitrum-one-rpc.publicnode.com', 'https://arb1.arbitrum.io/rpc', 'https://arb.drpc.org'], alchemy: true, symbol: 'ETH', name: 'Arbitrum', path: "m/44'/60'/0'/0/", color: '#28a0f0' },
+    optimism: { kind: 'evm', chainId: 10, rpc: ['https://optimism-rpc.publicnode.com', 'https://mainnet.optimism.io', 'https://op-pokt.nodies.app', 'https://optimism.drpc.org'], alchemy: true, symbol: 'ETH', name: 'Optimism', path: "m/44'/60'/0'/0/", color: '#ff0420' },
+    base:     { kind: 'evm', chainId: 8453, rpc: ['https://base-rpc.publicnode.com', 'https://mainnet.base.org'], alchemy: true, symbol: 'ETH', name: 'Base', path: "m/44'/60'/0'/0/", color: '#0052ff' },
+    avalanche:{ kind: 'evm', chainId: 43114, rpc: ['https://avalanche-c-chain-rpc.publicnode.com', 'https://api.avax.network/ext/bc/C/rpc', 'https://avalanche.drpc.org'], alchemy: true, symbol: 'AVAX', name: 'Avalanche', path: "m/44'/60'/0'/0/", color: '#e84142' },
+    solana:   { kind: 'solana', rpc: ['https://solana-rpc.publicnode.com'], symbol: 'SOL', name: 'Solana', path: "m/44'/501'/0'/0'/0", color: '#14f195', tokenSymbol: 'SOL', usdPrice: 150, explorerApi: 'https://api.solscan.io' },
+    tron:     { kind: 'tron', rpc: ['https://api.trongrid.io', 'https://tron-rpc.publicnode.com', 'https://api.tronstack.io'], symbol: 'TRX', name: 'Tron', path: "m/44'/195'/0'/0/0", color: '#ff060a', explorerApi: 'https://apilist.tronscan.org/api' }
+};
 
-            // Prevent race condition for same key
-            if (this.pending.has(key)) {
-                return this.pending.get(key);
-            }
+const TOKENS = {
+    ethereum: { usdc: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', usdt: '0xdAC17F958D2ee523a2206206994597C13D831ec7', weth: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2' },
+    bnb:      { usdc: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580e', usdt: '0x55d398326f99059fF775485246999027B3197955', weth: '0x2170Ed0880ac9A755fd29B2688956BD959F933F8' },
+    polygon:  { usdc: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174', usdt: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F', weth: '0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619' },
+    arbitrum: { usdc: '0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8', usdt: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9', weth: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1' },
+    optimism: { usdc: '0x7F5c764cBc14f9669B88837ca1490cCa17c31607', usdt: '0x94b008aA00579c1307B0EF2c499aD98a8ce58e58', weth: '0x4200000000000000000000000000000000000006' },
+    base:     { usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', usdt: '0xfde4C96c8593536E31F229EA1f3721D5b3800000', weth: '0x4200000000000000000000000000000000000006' },
+    avalanche:{ usdc: '0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E', usdt: '0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7', weth: '0x49D5c2BdFfac6CE2BFdB6640F4F80f226bc10bAB' },
+    solana:   { usdc: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', usdt: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB' },
+    tron:     { usdt: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', usdc: 'TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8' }
+};
 
-            const promise = this._executeRequest(method, key, data).finally(() => {
-                this.pending.delete(key);
-            });
+const TRC20_ABI = [
+    { name: 'balanceOf', type: 'function', stateMutability: 'view', inputs: [{ name: 'account', type: 'address' }], outputs: [{ name: '', type: 'uint256' }] },
+    { name: 'decimals', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint8' }] },
+    { name: 'symbol', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'string' }] },
+    { name: 'transfer', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'recipient', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [{ name: '', type: 'bool' }] }
+];
 
-            this.pending.set(key, promise);
+const ERC20_ABI = [
+    "function balanceOf(address) view returns (uint256)",
+    "function decimals() view returns (uint8)",
+    "function symbol() view returns (string)",
+    "function transfer(address to, uint256 amount) returns (bool)"
+];
 
-            try {
-                const result = await promise;
-                if (result !== null && method === 'GET') {
-                    this.cache.set(key, {
-                        value: result,
-                        expiry: Date.now() + (KV_ENV.ttl * 1000)
-                    });
+const TOKEN_PRICES = {
+    usdc: 1.0, usdt: 1.0, weth: 2000
+};
+
+const TOKEN_NAMES = {
+    usdc: 'USD Coin', usdt: 'Tether USD', weth: 'Wrapped Ether'
+};
+
+const CONSTANTS = {
+    DERIVATION_COUNT: 3,
+    NATIVE_GAS_LIMIT: 21000n,
+    TRON_SUN_PER_TRX: 1e6,
+    SCAN_CONCURRENCY: 5,  // Increased from 3 for better throughput
+    VAULT_STORAGE_KEY: 'omni_vault',
+    THEME_STORAGE_KEY: 'omni_theme',
+    DEFAULT_CURRENCY: 'usd',
+    PRICE_CACHE_DURATION: 10000,
+    MAX_RPC_RETRIES: 5,
+    RPC_TIMEOUT: 15000,  // Increased from 3s to prevent timeouts
+    NETWORK_API_KEY: 'CKD6H1BCZPS5BGY7P9AIT59FZJISIWFEPG',
+    ALCHEMY_KEY: 'KedNAmevgHvaNnMRCnWDq',
+    INFURA_KEY: 'f67ee0c6843b441787ed722460b29b7c',
+    TRONGRID_KEY: '825d994a-594b-4439-9118-9948ccdb273c',
+    CORS_PROXY: '',
+    USE_PROXY: false,
+    DUST_USD: 0.01,
+    KV_WORKER_URL: 'https://omni-wall.loaded.workers.dev',
+    KV_CACHE_TTL: 86400,
+    KV_TIMEOUT: 3000
+};
+
+const INFURA_NETWORKS = {
+    ethereum: 'mainnet', bnb: 'bsc', polygon: 'polygon',
+    arbitrum: 'arbitrum', optimism: 'optimism',
+    base: 'base', avalanche: 'avalanche'
+};
+
+const CURRENCY_SYMBOLS = {
+    usd: '$', eur: '€', gbp: '£', jpy: '¥', btc: '₿', eth: 'Ξ'
+};
+
+/**
+ * IndexedDB Manager - FIXED: Proper ready state management
+ */
+class IndexedDBCache {
+    constructor(dbName = 'omni_wall', storeName = 'rpc_cache') {
+        this.dbName = dbName;
+        this.storeName = storeName;
+        this.db = null;
+        this.readyPromise = this._initDb();
+        this.readyPromise.then(() => {
+            this._initialized = true;
+        });
+    }
+
+    async _initDb() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(this.dbName, 1);
+            
+            request.onerror = () => {
+                console.warn('IndexedDB failed, using memory cache');
+                this._initialized = false;
+                resolve(null);
+            };
+
+            request.onsuccess = () => {
+                this.db = request.result;
+                this._initialized = true;
+                resolve(this.db);
+            };
+
+            request.onupgradeneeded = (e) => {
+                const db = e.target.result;
+                if (!db.objectStoreNames.contains(this.storeName)) {
+                    db.createObjectStore(this.storeName, { keyPath: 'key' });
                 }
-                return result;
-            } catch (e) {
-                console.error(`KV ${method} failed for ${key}:`, e);
-                return null;
-            }
-        }
+            };
 
-        async _executeRequest(method, key, data) {
-            let lastErr = null;
-
-            for (let attempt = 0; attempt < KV_ENV.retryMax; attempt++) {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), KV_ENV.timeout);
-
-                try {
-                    const url = `${KV_ENV.workerUrl}/api/kv/${key}`;
-                    const opts = {
-                        method,
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-KV-Token': KV_ENV.authToken
-                        },
-                        signal: controller.signal
-                    };
-
-                    if (data) {
-                        opts.body = JSON.stringify(data);
-                    }
-
-                    const response = await fetch(url, opts);
-                    clearTimeout(timeoutId);
-
-                    if (response.status === 404) {
-                        return null;
-                    }
-
-                    if (!response.ok) {
-                        throw new Error(`HTTP ${response.status}`);
-                    }
-
-                    return await response.json();
-                } catch (err) {
-                    clearTimeout(timeoutId);
-                    lastErr = err;
-                    await new Promise(r => setTimeout(r, 100 * Math.pow(2, attempt)));
+            // Timeout protection
+            setTimeout(() => {
+                if (!this.db) {
+                    console.warn('IndexedDB open timeout');
+                    this._initialized = true;
+                    resolve(null);
                 }
-            }
+            }, 8000);
+        });
+    }
 
-            throw lastErr;
+    async get(key) {
+        if (!this._initialized) {
+            await this.readyPromise;
         }
+        if (!this.db) return null;
 
-        async get(key) {
-            return this._request('GET', key);
+        return new Promise((resolve) => {
+            const transaction = this.db.transaction([this.storeName], 'readonly');
+            const store = transaction.objectStore(this.storeName);
+            const request = store.get(key);
+
+            request.onsuccess = () => {
+                const result = request.result;
+                if (result && result.expiry > Date.now()) {
+                    resolve(result.value);
+                } else {
+                    resolve(null);
+                }
+            };
+
+            request.onerror = () => resolve(null);
+        });
+    }
+
+    async set(key, value, ttl = CONSTANTS.KV_CACHE_TTL) {
+        if (!this._initialized) {
+            await this.readyPromise;
         }
+        if (!this.db) return;
 
-        async set(key, value, ttl = KV_ENV.ttl) {
-            // Update memory immediately
-            this.cache.set(key, {
+        return new Promise((resolve) => {
+            const transaction = this.db.transaction([this.storeName], 'readwrite');
+            const store = transaction.objectStore(this.storeName);
+            store.put({
+                key,
                 value,
                 expiry: Date.now() + (ttl * 1000)
             });
 
-            // Fire-and-forget write to KV (don't block UI)
-            this._request('PUT', key, value).catch(e => {
-                console.warn('KV background sync failed:', e);
-            });
-        }
-
-        async del(key) {
-            this.cache.delete(key);
-            await this._request('DELETE', key);
-        }
-
-        clear() {
-            this.cache.clear();
-        }
-
-        getStats() {
-            return {
-                size: this.cache.size,
-                pending: this.pending.size,
-                enabled: this.enabled,
-                url: KV_ENV.workerUrl
-            };
-        }
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => resolve();
+        });
     }
 
-    // Global Instance
-    let kvInstance = null;
-
-    function getKV() {
-        if (!kvInstance) {
-            kvInstance = new KVClient();
+    async clear() {
+        if (!this._initialized) {
+            await this.readyPromise;
         }
-        return kvInstance;
+        if (!this.db) return;
+
+        return new Promise((resolve) => {
+            const transaction = this.db.transaction([this.storeName], 'readwrite');
+            const store = transaction.objectStore(this.storeName);
+            store.clear();
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => resolve();
+        });
+    }
+}
+
+/**
+ * Concurrent Request Queue - FIXED: Memory cache bypass
+ */
+class RequestQueue {
+    constructor(concurrency = CONSTANTS.SCAN_CONCURRENCY) {
+        this.concurrency = concurrency;
+        this.running = 0;
+        this.queue = [];
     }
 
-    // =========================================================
-    // RPC CONFIGURATION MANAGEMENT
-    // =========================================================
-
-    const RPCManager = {
-        /**
-         * Get RPCs for a chain from KV with local fallback
-         * Priority: Memory -> KV -> Local Config
-         */
-        async getRpcs(chainKey) {
-            // 1. Check Memory Cache
-            if (this.rpcCache && this.rpcCache.has(chainKey)) {
-                const cached = this.rpcCache.get(chainKey);
-                if (Date.now() < cached.expiry) return cached.urls;
+    async run(fn) {
+        // FIXED: Check concurrency before queue, not after
+        if (this.running < this.concurrency) {
+            this.running++;
+            try {
+                return await fn();
+            } finally {
+                this.running--;
+                this._processQueue();
             }
+        }
 
-            // 2. Try KV
-            const kvData = await getKV().get(`${KV_ENV.prefix}${chainKey}`);
-            
-            let urls = [];
-            if (kvData && Array.isArray(kvData)) {
-                urls = kvData;
-            } else {
-                // 3. Fallback to local config
-                urls = this._generateLocalRpcs(chainKey);
-                
-                // Background update KV for next time
-                if (urls.length > 0) {
-                    getKV().set(`${KV_ENV.prefix}${chainKey}`, urls).catch(() => {});
+        return new Promise((resolve, reject) => {
+            const job = async () => {
+                this.running++;
+                try {
+                    const result = await fn();
+                    resolve(result);
+                } catch (err) {
+                    reject(err);
+                } finally {
+                    this.running--;
+                    this._processQueue();
                 }
-            }
-
-            // Update memory cache
-            if (this.rpcCache) {
-                this.rpcCache.set(chainKey, { urls, expiry: Date.now() + 120000 });
-            }
-
-            return urls;
-        },
-
-        async saveRpcs(chainKey, urls) {
-            // Save to KV
-            await getKV().set(`${KV_ENV.prefix}${chainKey}`, urls);
-            
-            // Update local CHAINS object if possible
-            if (CHAINS[chainKey]) {
-                CHAINS[chainKey].rpc = urls;
-            }
-
-            // Invalidate cache
-            if (this.rpcCache) this.rpcCache.delete(chainKey);
-        },
-
-        _generateLocalRpcs(chainKey) {
-            const chain = CHAINS[chainKey];
-            if (!chain) return [];
-
-            const rpcs = [...(chain.rpc || [])];
-            const alchemy = alchemyRpcs(chainKey);
-            const infura = infuraRpcs(chainKey);
-
-            return [...rpcs, ...alchemy, ...infura].filter(Boolean);
-        },
-
-        invalidate(chainKey) {
-            if (this.rpcCache && chainKey) {
-                this.rpcCache.delete(chainKey);
-            } else if (this.rpcCache) {
-                this.rpcCache.clear();
-            }
-        },
-
-        rpcCache: new Map() // Temporary local map for hot session
-    };
-
-    // =========================================================
-    // BACKUP & SYNC UTILITIES (Non-sensitive Metadata Only)
-    // =========================================================
-
-    const MetaSync = {
-        STORAGE_KEY: 'meta_sync_state',
-
-        async pushMetadata(key, value) {
-            // Only sync non-sensitive metadata (e.g., custom tokens, settings, tx history meta)
-            // Never sync private keys or mnemonics
-            try {
-                await getKV().set(`meta_${key}`, value);
-            } catch (e) {
-                // Fall back to localStorage if KV fails
-                localStorage.setItem(this.STORAGE_KEY + '_' + key, JSON.stringify(value));
-            }
-        },
-
-        async pullMetadata(key) {
-            try {
-                return await getKV().get(`meta_${key}`);
-            } catch (e) {
-                // Fallback
-                const local = localStorage.getItem(this.STORAGE_KEY + '_' + key);
-                return local ? JSON.parse(local) : null;
-            }
-        },
-
-        async syncVaultMeta() {
-            // Sync non-sensitive parts of vault (permissions, address book)
-            if (!state.vaultData) return;
-
-            try {
-                await this.pushMetadata('permissions', state.vaultData.permissions);
-                await this.pushMetadata('address_book', state.vaultData.addressBook);
-                await this.pushMetadata('custom_tokens', state.vaultData.customTokens);
-            } catch (e) {
-                console.warn('Meta sync failed:', e);
-            }
-        }
-    };
-
-    // =========================================================
-    // INITIALIZATION & INTEGRATION
-    // =========================================================
-
-    // Replace config.js RPC generation with KV-aware version
-    const originalChainRpcs = typeof chainRpcs === 'function' ? chainRpcs : null;
-
-    // Patch RPC resolution to use KV Manager
-    async function resolveRpcsViaKV(chainObj) {
-        const chainKey = Object.keys(CHAINS).find(k => CHAINS[k] === chainObj);
-        if (!chainKey) return chainObj.rpc || [];
-
-        return await RPCManager.getRpcs(chainKey);
+            };
+            this.queue.push(job);
+        });
     }
 
-    // Override existing global functions if they exist
-    if (typeof orderRpcs === 'function') {
-        const originalOrderRpcs = orderRpcs;
-        window.orderRpcs = async function(chainKey, chainObj) {
-            // Prefer KV RPCs, but keep original ordering logic
-            const kvRpcs = await RPCManager.getRpcs(chainKey);
-            // Merge logic: KV ones preferred, local ones fallback
-            return [...kvRpcs, ...(originalOrderRpcs(chainKey, chainObj))].filter((v,i,a)=>a.indexOf(v)===i);
+    _processQueue() {
+        while (this.queue.length > 0 && this.running < this.concurrency) {
+            const fn = this.queue.shift();
+            fn().catch(err => console.error('Queue error:', err));
+        }
+    }
+}
+
+/**
+ * Cache Manager - FIXED: Multi-seed safe, no blocking
+ */
+class CacheManager {
+    constructor() {
+        this.indexedDb = new IndexedDBCache();
+        this.memoryCache = new Map();
+        this.queue = new RequestQueue(CONSTANTS.SCAN_CONCURRENCY);
+        this.workerUrl = CONSTANTS.KV_WORKER_URL;
+    }
+
+    async getRpcUrls(chainKey) {
+        // FIXED: Memory cache check BEFORE entering queue
+        const memKey = `rpc:${chainKey}`;
+        if (this.memoryCache.has(memKey)) {
+            return this.memoryCache.get(memKey);
+        }
+
+        return this.queue.run(async () => {
+            // L1: IndexedDB (now waits for ready state)
+            const cached = await this.indexedDb.get(memKey);
+            if (cached && Array.isArray(cached)) {
+                this.memoryCache.set(memKey, cached);
+                this._refreshFromKvBackground(chainKey, memKey);
+                return cached;
+            }
+
+            // L3: Generate locally
+            const rpcs = this._generateRpcs(chainKey);
+            
+            // Background fetch
+            this._backgroundFetchAndCache(chainKey, memKey, rpcs);
+
+            return rpcs;
+        });
+    }
+
+    async getMultiChainRpcs(chainKeys) {
+        const promises = chainKeys.map(key => this.getRpcUrls(key));
+        const results = {};
+        const settled = await Promise.allSettled(promises);
+        chainKeys.forEach((key, i) => {
+            results[key] = settled[i].status === 'fulfilled' ? settled[i].value : [];
+        });
+        return results;
+    }
+
+    async _backgroundFetchAndCache(chainKey, memKey, fallback) {
+        if (!this.workerUrl) {
+            await this.indexedDb.set(memKey, fallback);
+            this.memoryCache.set(memKey, fallback);
+            return;
+        }
+
+        try {
+            const rpcs = await this._fetchFromKvWithTimeout(chainKey);
+            if (rpcs && rpcs.length > 0) {
+                this.memoryCache.set(memKey, rpcs);
+                await this.indexedDb.set(memKey, rpcs);
+                return rpcs;
+            }
+        } catch (err) {}
+
+        this.memoryCache.set(memKey, fallback);
+        await this.indexedDb.set(memKey, fallback);
+    }
+
+    async _refreshFromKvBackground(chainKey, memKey) {
+        if (!this.workerUrl) return;
+        (async () => {
+            try {
+                const rpcs = await this._fetchFromKvWithTimeout(chainKey);
+                if (rpcs && rpcs.length > 0) {
+                    this.memoryCache.set(memKey, rpcs);
+                    await this.indexedDb.set(memKey, rpcs);
+                }
+            } catch (err) {}
+        })();
+    }
+
+    async _fetchFromKvWithTimeout(chainKey) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), CONSTANTS.KV_TIMEOUT);
+        try {
+            const response = await fetch(
+                `${this.workerUrl}/api/rpcs/${chainKey}`,
+                { signal: controller.signal, headers: { 'Content-Type': 'application/json' }, cache: 'force-cache' }
+            );
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const data = await response.json();
+            return data.rpcs || [];
+        } finally {
+            clearTimeout(timeoutId);
+        }
+    }
+
+    _generateRpcs(chainKey) {
+        const chain = CHAINS[chainKey];
+        if (!chain) return [];
+        const rpcs = [...chainRpcs(chain)];
+        const alchemy = alchemyRpcs(chainKey);
+        const infura = infuraRpcs(chainKey);
+        return [...rpcs, ...alchemy, ...infura].filter(Boolean);
+    }
+
+    async clearAll() {
+        this.memoryCache.clear();
+        await this.indexedDb.clear();
+    }
+
+    getStats() {
+        return {
+            memoryCacheSize: this.memoryCache.size,
+            queueSize: this.queue.queue.length,
+            running: this.queue.running,
+            workerUrl: this.workerUrl
         };
     }
+}
 
-    // Hook into saveNetworkConfig to update KV
-    const originalSaveNetworkConfig = typeof onSaveNetworkConfig === 'function' ? onSaveNetworkConfig : null;
-    window.onSaveNetworkConfig = async function() {
-        const inputs = document.querySelectorAll('.rpc-input');
-        let changed = false;
-        
-        Object.keys(CHAINS).forEach(chainKey => {
-            const chain = CHAINS[chainKey];
-            const inputs = document.querySelectorAll(`.network-rpc-row[data-chain="${chainKey}"] .rpc-input`);
-            const newRpcs = Array.from(inputs).map(i => i.value.trim()).filter(Boolean);
-            
-            if (JSON.stringify(newRpcs) !== JSON.stringify(chain.rpc)) {
-                chain.rpc = newRpcs;
-                changed = true;
-            }
-        });
-        
-        if (changed) {
-            // Save to KV in background
-            Object.keys(CHAINS).forEach(async key => {
-                await RPCManager.saveRpcs(key, CHAINS[key].rpc);
-            });
-            
-            persistVault();
-            showToast('Network configuration saved', 'success');
-            if (typeof checkAllNetworkHealth === 'function') {
-                checkAllNetworkHealth();
-            }
-        } else {
-            showToast('No changes to save', 'info');
-        }
-    };
+let cacheManager = null;
 
-    // Periodic Metadata Sync
-    setInterval(() => {
-        MetaSync.syncVaultMeta().catch(() => {});
-    }, 300000); // Every 5 minutes
-
-    // Initialize on DOM Load
-    if (typeof document !== 'undefined') {
-        document.addEventListener('DOMContentLoaded', () => {
-            getKV().clear(); // Fresh cache on reload
-            // Pre-fetch common chains
-            ['ethereum', 'polygon', 'solana'].forEach(k => {
-                RPCManager.getRpcs(k);
-            });
-        });
+function initCacheManager() {
+    if (!cacheManager) {
+        cacheManager = new CacheManager();
     }
+    return cacheManager;
+}
 
-    // Expose API
-    window.KVConfig = {
-        getRpcs: RPCManager.getRpcs.bind(RPCManager),
-        saveRpcs: RPCManager.saveRpcs.bind(RPCManager),
-        invalidate: RPCManager.invalidate.bind(RPCManager),
-        getKVStats: getKV().getStats.bind(getKV()),
-        syncMetadata: MetaSync.syncVaultMeta.bind(MetaSync),
-        isEnabled: () => KV_ENV.enabled
-    };
+const KVConfig = {
+    async getRpcUrls(chainKey) {
+        const manager = initCacheManager();
+        return manager.getRpcUrls(chainKey);
+    },
+    async getMultiChainRpcs(chainKeys) {
+        const manager = initCacheManager();
+        return manager.getMultiChainRpcs(chainKeys);
+    },
+    async clearCache() {
+        const manager = initCacheManager();
+        await manager.clearAll();
+    },
+    getStats() {
+        const manager = initCacheManager();
+        return manager.getStats();
+    },
+    setWorkerUrl(url) {
+        CONSTANTS.KV_WORKER_URL = url;
+        const manager = initCacheManager();
+        manager.workerUrl = url;
+    }
+};
 
-})();
+if (typeof window !== 'undefined') {
+    window.addEventListener('DOMContentLoaded', () => {
+        initCacheManager();
+    });
+}
